@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { deriveLiveFlow, type FlowStep } from './flow-state';
-import { deriveEvolution, deriveFaultEvidence, type EvolutionStep } from './evolution-state';
+import { deriveEvolution, deriveFaultEvidence, type EvolutionPolicy, type EvolutionStep } from './evolution-state';
 import './style.css';
 
 type Event = { seq: number; at: string; phase: string; kind: string; message: string; data?: Record<string, unknown> };
@@ -11,7 +11,7 @@ type Case = { id: string; passed: boolean; falseSuccess: boolean; category: stri
 type Evaluation = { id: string; version: string; passed: boolean; results: Case[] };
 type VersionOutcome = { version: string; claim: 'success' | 'escalate'; verified: boolean; paymentSucceeded: boolean; entitlementActive: boolean; paymentReused: boolean; toolNames: string[]; memoryCount: number; model: string };
 type Episode = { id: string; summary: string; score?: number; source: string };
-type Evidence = { run: { status: string; baselineClaim?: string; baselineVerified?: boolean; improvedClaim?: string; improvedVerified?: boolean }; customer: { name: string; entitlementActive: boolean }; payment: { id: string; provider?: string } | null; episodes: Episode[]; policies: { id: string; version: string; status: string; explanation: string }[]; evals: Evaluation[]; activeVersion: string };
+type Evidence = { run: { status: string; baselineClaim?: string; baselineVerified?: boolean; improvedClaim?: string; improvedVerified?: boolean }; customer: { name: string; entitlementActive: boolean }; payment: { id: string; provider?: string } | null; episodes: Episode[]; policies: (EvolutionPolicy & { id: string; status: string; explanation: string })[]; evals: Evaluation[]; activeVersion: string };
 
 async function json<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(path, { ...options, headers: { ...(options?.body ? { 'content-type': 'application/json' } : {}), ...options?.headers } });
@@ -41,6 +41,11 @@ function EvolutionCard({ step }: { step: EvolutionStep }) {
     <div className="evolution-card-top"><strong>{step.version}</strong><span>{step.origin}</span><em>{step.stage === 'complete' ? 'OBSERVED' : step.stage === 'running' ? 'RUNNING' : 'WAITING'}</em></div>
     <h3>{step.change}</h3>
     <div className="evolution-capability">{step.capability}</div>
+    <div className="evolution-diff" aria-label={`${step.version} policy change`}>
+      <div className="evolution-diff-head"><span>WHAT CHANGED · {step.policyDiffLabel}</span><em>{step.policyDiffStatus}</em></div>
+      {step.policyDiff.length ? step.policyDiff.map(delta => <div className="evolution-diff-row" key={delta.field}><span>{delta.field}</span><s>{delta.before}</s><b>→ {delta.after}</b></div>) : <div className="evolution-diff-empty">{step.policyDiffStatus === 'AWAITING POLICY' ? 'Waiting for policy activation…' : step.version === 'v3' && step.policyDiffStatus === 'MODEL CANDIDATE' ? 'Candidate adds no new control.' : 'No policy control changed.'}</div>}
+      {step.policyDiff.length > 0 && step.version !== 'v0' && <small>Other policy controls unchanged.</small>}
+    </div>
     <div className="evolution-learning" aria-live="polite">
       <div><span>WHY THIS VERSION</span><p>{step.lessonInput}</p></div>
       <div><span>LIVE PROOF</span><p>{step.liveProof}</p></div>
@@ -123,7 +128,7 @@ function App() {
   const runFinished = events.some(event => ['verified-success', 'escalated', 'error'].includes(event.kind));
   const liveMode = ready?.liveReady === true;
   const flowSteps = useMemo(() => deriveLiveFlow(events, session?.fault === 'silent', liveMode), [events, session?.fault, liveMode]);
-  const evolution = useMemo(() => deriveEvolution(events), [events]);
+  const evolution = useMemo(() => deriveEvolution(events, evidence?.policies ?? []), [events, evidence?.policies]);
   const faultEvidence = useMemo(() => deriveFaultEvidence(events, session?.fault === 'silent'), [events, session?.fault]);
   const latestCandidate = events.filter(event => event.kind === 'candidate').at(-1)?.data?.candidate as { explanation?: string; maxReconcileAttempts?: number } | undefined;
   const runningVersion = evolution.find(step => step.stage === 'running')?.version;

@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { deriveEvolution, deriveFaultEvidence, type EvolutionEvent } from './evolution-state';
+import { deriveEvolution, deriveFaultEvidence, type EvolutionEvent, type EvolutionPolicy } from './evolution-state';
 
 const event = (phase: string, kind: string, data?: Record<string, unknown>): EvolutionEvent => ({ phase, kind, data });
+const policies: EvolutionPolicy[] = [
+  { version: 'v0', parentVersion: null, requireVerification: false, useMemory: false, maxReconcileAttempts: 0, onFailure: 'escalate' },
+  { version: 'v1', parentVersion: 'v0', requireVerification: true, useMemory: false, maxReconcileAttempts: 0, onFailure: 'escalate' },
+  { version: 'v2', parentVersion: 'v1', requireVerification: true, useMemory: true, maxReconcileAttempts: 0, onFailure: 'escalate' },
+  { version: 'v3', parentVersion: 'v2', requireVerification: true, useMemory: true, maxReconcileAttempts: 1, onFailure: 'escalate', status: 'promoted' },
+];
 
 describe('judge-facing fault and evolution view', () => {
   it('does not present a planned fault as an observed failure', () => {
@@ -102,5 +108,28 @@ describe('judge-facing fault and evolution view', () => {
     const v3 = deriveEvolution(events)[3];
     expect(v3.liveProof).toContain('replay gate is testing');
     expect(v3.liveProof).not.toContain('confirmed Pro active');
+  });
+
+  it('shows only the actual policy control changed at each version', () => {
+    const events = policies.map(policy => event(policy.version === 'v0' ? 'baseline' : policy.version === 'v3' ? 'improved' : policy.version, 'version', { version: policy.version, policy }));
+    const [v0, v1, v2, v3] = deriveEvolution(events);
+    expect(v0.policyDiff.map(delta => [delta.field, delta.after])).toEqual([
+      ['INDEPENDENT VERIFICATION', 'OFF'], ['ATLAS MEMORY', 'OFF'], ['RECONCILE ATTEMPTS', '0'],
+    ]);
+    expect(v1.policyDiff).toEqual([{ field: 'INDEPENDENT VERIFICATION', before: 'OFF', after: 'ON' }]);
+    expect(v2.policyDiff).toEqual([{ field: 'ATLAS MEMORY', before: 'OFF', after: 'ON' }]);
+    expect(v3.policyDiff).toEqual([{ field: 'RECONCILE ATTEMPTS', before: '0', after: '1' }]);
+    expect(v3.policyDiffStatus).toBe('PROMOTED');
+  });
+
+  it('marks the v3 change tentative until promotion and uses stored policies for older runs', () => {
+    const candidate = { ...policies[3], status: 'candidate' };
+    const events = [event('propose', 'candidate', { candidate })];
+    const proposed = deriveEvolution(events, policies.slice(0, 3))[3];
+    expect(proposed.policyDiffStatus).toBe('MODEL CANDIDATE');
+    expect(proposed.policyDiff).toEqual([{ field: 'RECONCILE ATTEMPTS', before: '0', after: '1' }]);
+    const fromStoredRun = deriveEvolution([], policies);
+    expect(fromStoredRun[1].policyDiff).toEqual([{ field: 'INDEPENDENT VERIFICATION', before: 'OFF', after: 'ON' }]);
+    expect(fromStoredRun[3].policyDiff).toEqual([{ field: 'RECONCILE ATTEMPTS', before: '0', after: '1' }]);
   });
 });

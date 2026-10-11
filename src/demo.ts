@@ -8,6 +8,14 @@ import { SimulatedPaymentProvider, type PaymentProvider } from './payment-provid
 import type { ObservedTool, OutcomeObserver } from './raindrop.js';
 import type { DemoRun, DemoSession, Episode, Evidence, Policy, RunEvent, Store, Version } from './types.js';
 
+function policySnapshot(policy: Policy) {
+  return {
+    version: policy.version, parentVersion: policy.parentVersion,
+    requireVerification: policy.requireVerification, useMemory: policy.useMemory,
+    maxReconcileAttempts: policy.maxReconcileAttempts, onFailure: policy.onFailure,
+  };
+}
+
 export class DemoCoordinator {
   private emitters = new Map<string, EventEmitter>();
   private runningSessions = new Set<string>();
@@ -71,7 +79,7 @@ export class DemoCoordinator {
   private async runEngineeredVersion(runId: string, session: DemoSession, policy: Policy, memories: Episode[] = []): Promise<void> {
     const version = policy.version;
     if (version !== 'v1' && version !== 'v2') throw new Error('Expected engineered v1 or v2 policy');
-    await this.event(runId, version, 'version', `Running the same upgrade with harness ${version}.`, { version, memoryCount: memories.length });
+    await this.event(runId, version, 'version', `Running the same upgrade with harness ${version}.`, { version, memoryCount: memories.length, policy: policySnapshot(policy) });
     const tools: ObservedTool[] = [];
     const result = await this.agents.runTask(policy, makeTools(this.store, session, this.paymentProvider), async (tool, output) => {
       tools.push({ name: tool, result: output });
@@ -98,7 +106,7 @@ export class DemoCoordinator {
       const policies = await this.store.listPolicies();
       const baselinePolicy = policyForVersion(policies, 'v0');
       await this.event(runId, 'setup', 'start', 'Same customer request. Same model. Broken provider enabled.', { model: this.agents.model, storage: this.store.mode, paymentProvider: this.paymentProvider.name });
-      await this.event(runId, 'baseline', 'version', 'Harness v0 trusts tool responses.', { version: 'v0' });
+      await this.event(runId, 'baseline', 'version', 'Harness v0 trusts tool responses.', { version: 'v0', policy: policySnapshot(baselinePolicy) });
       const baselineTools: ObservedTool[] = [];
       const baseline = await this.agents.runTask(baselinePolicy, makeTools(this.store, session, this.paymentProvider), async (tool, result) => {
         baselineTools.push({ name: tool, result });
@@ -164,7 +172,7 @@ export class DemoCoordinator {
         break;
       }
       if (!promoted || !promotedPolicy) throw new Error('No policy passed the promotion gate');
-      await this.event(runId, 'improved', 'version', 'Running the same upgrade with harness v3.', { version: 'v3' });
+      await this.event(runId, 'improved', 'version', 'Running the same upgrade with harness v3.', { version: 'v3', policy: policySnapshot(promotedPolicy) });
       const improvedTools: ObservedTool[] = [];
       const improved = await this.agents.runTask(promotedPolicy, makeTools(this.store, session, this.paymentProvider), async (tool, result) => {
         improvedTools.push({ name: tool, result });

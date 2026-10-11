@@ -79,6 +79,12 @@
 .evolution-learning>div:last-child{border-left-color:#a5ff70}
 .evolution-learning span{font:8px 'DM Mono',monospace;letter-spacing:.7px;color:#99c8a2}
 .evolution-learning p{font:11px/1.4 'DM Sans',sans-serif;color:#dae9d7;margin:5px 0 0;overflow-wrap:anywhere}
+.evolution-diff{border:1px solid #47674c;background:#14231a;padding:9px 10px;min-width:0}
+.evolution-diff-head{display:flex;justify-content:space-between;gap:8px;align-items:center;font:9px 'DM Mono',monospace;letter-spacing:.5px;color:#a5ff70}
+.evolution-diff-head em{font-style:normal;color:#a8c0aa;font-size:8px;text-align:right}
+.evolution-diff-row{display:grid;grid-template-columns:minmax(0,1fr) 31px 44px;gap:6px;align-items:center;padding-top:7px;font:10px 'DM Mono',monospace;color:#dae9d7}
+.evolution-diff-row s{color:#8b9e8f;text-decoration-color:#e58b79}.evolution-diff-row b{color:#b9ff9f;font-weight:500;text-align:right}
+.evolution-diff small,.evolution-diff-empty{display:block;color:#8daa90;font:9px 'DM Mono',monospace;margin-top:7px}
 .evolution-trace{border:1px solid #354b3a;background:#101b14;min-width:0}
 .evolution-trace-head{display:flex;justify-content:space-between;gap:8px;border-bottom:1px solid #344738;padding:8px 10px;font:9px 'DM Mono',monospace;letter-spacing:.7px;color:#a5e69b}
 .evolution-trace-head span{color:#819c85}

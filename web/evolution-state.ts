@@ -2,6 +2,8 @@ export type EvolutionEvent = { seq?: number; phase: string; kind: string; messag
 export type VersionId = 'v0' | 'v1' | 'v2' | 'v3';
 export type EvolutionStage = 'waiting' | 'running' | 'complete';
 export type EvolutionTraceItem = { seq: number | null; kind: string; message: string };
+export type EvolutionPolicy = { version: VersionId; parentVersion: VersionId | null; requireVerification: boolean; useMemory: boolean; maxReconcileAttempts: number; onFailure: 'escalate'; status?: string };
+export type PolicyDelta = { field: string; before: string; after: string };
 export type EvolutionStep = {
   version: VersionId;
   origin: string;
@@ -17,6 +19,9 @@ export type EvolutionStep = {
   trace: EvolutionTraceItem[];
   lessonInput: string;
   liveProof: string;
+  policyDiff: PolicyDelta[];
+  policyDiffLabel: string;
+  policyDiffStatus: string;
 };
 
 const steps: Pick<EvolutionStep, 'version' | 'origin' | 'change' | 'capability'>[] = [
@@ -26,8 +31,20 @@ const steps: Pick<EvolutionStep, 'version' | 'origin' | 'change' | 'capability'>
   { version: 'v3', origin: 'MODEL-PROPOSED POLICY', change: 'Await a policy candidate', capability: 'Replay gate decides allowed tools' },
 ];
 
-export function deriveEvolution(events: EvolutionEvent[]): EvolutionStep[] {
+const policyFields = [
+  { key: 'requireVerification', label: 'INDEPENDENT VERIFICATION' },
+  { key: 'useMemory', label: 'ATLAS MEMORY' },
+  { key: 'maxReconcileAttempts', label: 'RECONCILE ATTEMPTS' },
+] as const;
+
+function policyValue(value: boolean | number): string { return typeof value === 'boolean' ? value ? 'ON' : 'OFF' : String(value); }
+
+export function deriveEvolution(events: EvolutionEvent[], storedPolicies: EvolutionPolicy[] = []): EvolutionStep[] {
   const outcomeFor = (version: VersionId) => events.find(event => event.kind === 'version-outcome' && event.data?.version === version)?.data;
+  const policyFor = (version: VersionId): EvolutionPolicy | undefined => {
+    const fromRun = events.find(event => event.kind === 'version' && event.data?.version === version)?.data?.policy as EvolutionPolicy | undefined;
+    return fromRun ?? storedPolicies.find(policy => policy.version === version && policy.status !== 'rejected' && (version !== 'v3' || policy.status === 'promoted'));
+  };
   const replayFor = (version: VersionId) => events.filter(event => {
     if (event.kind !== 'version-result' && event.kind !== 'results') return false;
     return (event.data?.evaluation as { version?: string } | undefined)?.version === version;
@@ -46,7 +63,8 @@ export function deriveEvolution(events: EvolutionEvent[]): EvolutionStep[] {
     const outcome = outcomeFor(step.version);
     const started = events.some(event => event.kind === 'version' && event.data?.version === step.version);
     const proposing = step.version === 'v3' && (Boolean(outcomeFor('v2')) || events.some(event => ['candidate', 'results', 'promoted'].includes(event.kind)));
-    const candidate = step.version === 'v3' ? events.filter(event => event.kind === 'candidate').at(-1)?.data?.candidate as { maxReconcileAttempts?: number } | undefined : undefined;
+    const candidateEvent = step.version === 'v3' ? events.filter(event => event.kind === 'candidate').at(-1) : undefined;
+    const candidate = candidateEvent?.data?.candidate as EvolutionPolicy | undefined;
     const stage: EvolutionStage = outcome ? 'complete' : started || proposing ? 'running' : 'waiting';
     const claim = outcome?.claim === 'success' ? 'SUCCESS CLAIM' : outcome?.claim === 'escalate' ? 'ESCALATED' : '—';
     const access = outcome ? outcome.entitlementActive === true ? 'PRO ACTIVE' : 'PRO LOCKED' : '—';
@@ -56,6 +74,14 @@ export function deriveEvolution(events: EvolutionEvent[]): EvolutionStep[] {
     const replay = replayFor(step.version);
     const priorVersion = { v0: null, v1: 'v0', v2: 'v1', v3: 'v2' }[step.version] as VersionId | null;
     const prior = priorVersion ? outcomeFor(priorVersion) : undefined;
+    const currentPolicy = policyFor(step.version) ?? candidate;
+    const previousPolicy = priorVersion ? policyFor(priorVersion) : undefined;
+    const policyDiff = currentPolicy && (!priorVersion || previousPolicy) ? policyFields.flatMap(({ key, label }) => {
+      const before = previousPolicy?.[key];
+      const after = currentPolicy[key];
+      return before === after ? [] : [{ field: label, before: before === undefined ? '—' : policyValue(before), after: policyValue(after) }];
+    }) : [];
+    const policyDiffStatus = !currentPolicy ? 'AWAITING POLICY' : step.version === 'v3' ? started || currentPolicy.status === 'promoted' || events.some(event => event.kind === 'promoted') ? 'PROMOTED' : events.some(event => event.kind === 'rejected' && (event.seq ?? Infinity) > (candidateEvent?.seq ?? -1)) ? 'REJECTED CANDIDATE' : 'MODEL CANDIDATE' : 'ENGINEERED';
     const lessonInput = step.version === 'v0' ? 'Starting rule: trust a successful tool response.'
       : !prior ? `Waiting for ${priorVersion} outcome.`
       : step.version === 'v1' ? prior.claim === 'success' && prior.entitlementActive === false ? 'v0 claimed success while Maya stayed locked.' : 'v0 outcome observed; checking the customer state.'
@@ -89,6 +115,9 @@ export function deriveEvolution(events: EvolutionEvent[]): EvolutionStep[] {
       trace,
       lessonInput,
       liveProof,
+      policyDiff,
+      policyDiffLabel: priorVersion ? `${priorVersion} → ${step.version}` : 'STARTING POLICY',
+      policyDiffStatus,
     };
   });
 }
