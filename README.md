@@ -43,16 +43,17 @@ The live demo makes real OpenAI Responses API calls. It uses function calls for 
 
 Add `RAINDROP_WRITE_KEY` to the server's local `.env` (and optionally `RAINDROP_PROJECT_ID` for a non-default project). Never put the write key in browser code or Git. Restart the server after changing `.env`. `/api/ready` reports `raindropConfigured: true` when the SDK is enabled; this does **not** prove that Raindrop accepted an event. Run the demo and check the Raindrop outcome indicator and `raindrop-recorded` events in Atlas evidence, then confirm both interactions and their signals in the Raindrop project before claiming the partner integration in a submission.
 
-The server sends one interaction for the `v0` false-success claim and one for the `v3` verified recovery. Each uses the Atlas run ID as conversation ID, an opaque session ID as user ID, sanitized tool results, and a `false_success`, `verified_recovery`, or `safe_escalation` signal. Customer names, email addresses, payment IDs, raw prompts, and credentials are not sent. Raindrop is observational; Atlas remains the source of truth and telemetry failure never changes replay or promotion decisions.
+The server sends one interaction for each live harness version: `v0` false success, `v1` and `v2` safe escalation, and `v3` verified recovery. Each uses the Atlas run ID as conversation ID, an opaque session ID as user ID, sanitized tool results, and a `false_success`, `verified_recovery`, or `safe_escalation` signal. Customer names, email addresses, payment IDs, raw prompts, and credentials are not sent. Raindrop is observational; Atlas remains the source of truth and telemetry failure never changes replay or promotion decisions.
 
 ## Judge flow
 
 1. **Break Provider** selects a silent-failure fault for this browser session.
-2. **Upgrade Maya** runs v0. Its upgrade call returns `200 OK`, but the independent customer read shows Pro inactive. The event and episode are stored.
-3. v2 retrieves prior simulated incidents. The proposer can submit one candidate and, if replay rejects it, revise once using counterexamples.
-4. The promotion gate runs 18 deterministic fixtures across normal success, silent `200`, delayed access, malformed responses, duplicate requests, and provider drift. All must pass; zero false-success claims and duplicate charges are allowed. Evals do not call the model.
-5. If v3 is promoted, the Task Agent repeats the same customer request. The payment is reused via idempotency, the entitlement is checked, reconciliation is allowed once after a failed check, and success requires a final independent verification.
-6. **Inspect Atlas Evidence** opens the stored run, episode, policy candidates, eval results, and active version. In local mode the button says **Inspect Local Evidence**.
+2. **Upgrade Maya** runs the Task Agent with v0. Its upgrade call returns `200 OK`, but the independent customer read shows Pro inactive. The event and episode are stored.
+3. The same model and request run with v1: it verifies and safely escalates. Atlas then retrieves prior simulated incidents; v2 receives them as context and also safely escalates because it still cannot reconcile. The four-version comparison shows each live claim, customer state, tool sequence, payment reuse, memory hits, and separately measured replay score as events arrive.
+4. The proposer can submit one candidate and, if replay rejects it, revise once using counterexamples.
+5. The promotion gate runs 18 deterministic fixtures across normal success, silent `200`, delayed access, malformed responses, duplicate requests, and provider drift. All must pass, with zero false-success claims and zero duplicate charges. Evals do not call the model.
+6. If v3 is promoted, the Task Agent repeats the same customer request. The payment is reused via idempotency, the entitlement is checked, reconciliation is allowed once after a failed check, and success requires a final independent verification.
+7. **Inspect Atlas Evidence** opens the stored run, all four agent outcomes, episode, policy candidates, eval results, and active version. In local mode the button says **Inspect Local Evidence**.
 
 The UI streams real server events; it does not animate a predetermined success score. Runtime depends on Atlas and model latency, so rehearse before presenting.
 

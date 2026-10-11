@@ -5,7 +5,7 @@ import { candidatePolicy, ensurePolicies, policyForVersion } from './policies.js
 import { evaluatePolicy } from './evals.js';
 import { makeTools, verifyReality } from './simulator.js';
 import type { ObservedTool, OutcomeObserver } from './raindrop.js';
-import type { DemoRun, DemoSession, Episode, Evidence, RunEvent, Store } from './types.js';
+import type { DemoRun, DemoSession, Episode, Evidence, Policy, RunEvent, Store, Version } from './types.js';
 
 export class DemoCoordinator {
   private emitters = new Map<string, EventEmitter>();
@@ -45,7 +45,7 @@ export class DemoCoordinator {
       this.store.listEpisodes(runId), this.store.listPolicies(), this.store.listEvals(runId),
       this.store.getActiveVersion(session.id),
     ]);
-    return { run, customer, payment, episodes, policies, evals, activeVersion };
+    return { run, customer, payment, episodes, policies: policies.filter(policy => policy.status === 'engineered' || policy.sourceRunId === runId), evals, activeVersion };
   }
 
   private async event(runId: string, phase: RunEvent['phase'], kind: string, message: string, data?: Record<string, unknown>): Promise<void> {
@@ -56,14 +56,39 @@ export class DemoCoordinator {
     this.emitters.get(runId)?.emit('event', event);
   }
 
-  private async observe(runId: string, session: DemoSession, version: 'v0' | 'v3', claim: 'success' | 'escalate', paymentSucceeded: boolean, entitlementActive: boolean, verified: boolean, tools: ObservedTool[]): Promise<void> {
+  private async observe(runId: string, session: DemoSession, version: Version, claim: 'success' | 'escalate', paymentSucceeded: boolean, entitlementActive: boolean, verified: boolean, tools: ObservedTool[]): Promise<void> {
     if (!this.observer) return;
+    const phase = { v0: 'verify', v1: 'v1', v2: 'v2', v3: 'improved' } as const;
     try {
       const eventId = await this.observer.record({ runId, sessionId: session.id, version, model: this.agents.model, claim, paymentSucceeded, entitlementActive, verified, tools });
-      await this.event(runId, version === 'v0' ? 'verify' : 'improved', 'raindrop-recorded', `Raindrop ${version} outcome recorded.`, { eventId, version, signal: verified ? 'verified_recovery' : claim === 'success' ? 'false_success' : 'safe_escalation' });
+      await this.event(runId, phase[version], 'raindrop-recorded', `Raindrop ${version} outcome recorded.`, { eventId, version, signal: verified ? 'verified_recovery' : claim === 'success' ? 'false_success' : 'safe_escalation' });
     } catch {
-      await this.event(runId, version === 'v0' ? 'verify' : 'improved', 'raindrop-error', 'Raindrop telemetry failed; Atlas outcome remains authoritative.', { version });
+      await this.event(runId, phase[version], 'raindrop-error', 'Raindrop telemetry failed; Atlas outcome remains authoritative.', { version });
     }
+  }
+
+  private async runEngineeredVersion(runId: string, session: DemoSession, policy: Policy, memories: Episode[] = []): Promise<void> {
+    const version = policy.version;
+    if (version !== 'v1' && version !== 'v2') throw new Error('Expected engineered v1 or v2 policy');
+    await this.event(runId, version, 'version', `Running the same upgrade with harness ${version}.`, { version, memoryCount: memories.length });
+    const tools: ObservedTool[] = [];
+    const result = await this.agents.runTask(policy, makeTools(this.store, session), async (tool, output) => {
+      tools.push({ name: tool, result: output });
+      await this.event(runId, version, 'tool', `${tool} → ${JSON.stringify(output)}`, { tool, result: output });
+    }, memories);
+    await this.event(runId, version, 'claim', `Task Agent ${version}: ${result.message}`, { claim: result.claim, model: result.model, prompt: result.prompt });
+    const reality = await verifyReality(this.store, session);
+    const verified = result.claim === 'success' && reality.outcomeSucceeded && result.toolNames.includes('verify_entitlement');
+    await this.event(runId, version, 'version-outcome', `Harness ${version}: ${result.claim}; entitlement ${reality.customer.entitlementActive ? 'active' : 'inactive'}.`, {
+      version, claim: result.claim, verified, paymentSucceeded: reality.paymentSucceeded,
+      entitlementActive: reality.customer.entitlementActive, toolNames: result.toolNames,
+      paymentReused: (tools.find(item => item.name === 'charge_customer')?.result as { reused?: boolean } | undefined)?.reused ?? false,
+      memoryCount: memories.length, model: result.model,
+    });
+    await this.observe(runId, session, version, result.claim, reality.paymentSucceeded, reality.customer.entitlementActive, verified, tools);
+    const evaluation = evaluatePolicy(policy, runId);
+    await this.store.saveEval(evaluation);
+    await this.event(runId, 'eval', 'version-result', `Harness ${version} replay ${evaluation.results.filter(item => item.passed).length}/18 passed.`, { evaluation });
   }
 
   private async execute(runId: string, session: DemoSession): Promise<void> {
@@ -84,6 +109,12 @@ export class DemoCoordinator {
       await this.store.finishRun(runId, { baselineClaim: baseline.claim, baselineVerified });
       const reproduced = baseline.claim === 'success' && observed.paymentSucceeded && !observed.customer.entitlementActive;
       await this.event(runId, 'verify', reproduced ? 'false-success' : 'baseline-not-reproduced', reproduced ? 'FALSE SUCCESS: payment succeeded, but Maya has no Pro entitlement.' : 'Baseline did not reproduce a false-success claim.', { claim: baseline.claim, paymentSucceeded: observed.paymentSucceeded, entitlementActive: observed.customer.entitlementActive });
+      await this.event(runId, 'baseline', 'version-outcome', `Harness v0: ${baseline.claim}; entitlement ${observed.customer.entitlementActive ? 'active' : 'inactive'}.`, {
+        version: 'v0', claim: baseline.claim, verified: baselineVerified, paymentSucceeded: observed.paymentSucceeded,
+        entitlementActive: observed.customer.entitlementActive, toolNames: baseline.toolNames,
+        paymentReused: (baselineTools.find(item => item.name === 'charge_customer')?.result as { reused?: boolean } | undefined)?.reused ?? false,
+        memoryCount: 0, model: baseline.model,
+      });
       await this.observe(runId, session, 'v0', baseline.claim, observed.paymentSucceeded, observed.customer.entitlementActive, baselineVerified, baselineTools);
       if (!reproduced) throw new Error('Fault injection or baseline claim did not reproduce false success; reset and retry');
       const incidentSummary = 'Upgrade API returned 200 OK after payment, but customer entitlement stayed inactive. Agent claimed success. Reconciliation after payment can grant access.';
@@ -93,12 +124,14 @@ export class DemoCoordinator {
         createdAt: new Date().toISOString(),
       };
       await this.store.saveEpisode(episode);
-      const engineeredEvals = (['v0', 'v1', 'v2'] as const).map(version => evaluatePolicy(policyForVersion(policies, version), runId));
-      for (const evaluation of engineeredEvals) await this.store.saveEval(evaluation);
-      await this.event(runId, 'eval', 'version-results', 'Measured replay results for engineered harness versions.', { evaluations: engineeredEvals });
+      const baselineEval = evaluatePolicy(baselinePolicy, runId);
+      await this.store.saveEval(baselineEval);
+      await this.event(runId, 'eval', 'version-result', `Harness v0 replay ${baselineEval.results.filter(item => item.passed).length}/18 passed.`, { evaluation: baselineEval });
+      await this.runEngineeredVersion(runId, session, policyForVersion(policies, 'v1'));
       const memories = (await this.store.searchEpisodes(incidentSummary, 4)).filter(memory => memory.id !== episode.id).slice(0, 3);
       if (!memories.length) throw new Error('No prior episodes retrieved from Atlas memory; run setup:atlas and wait for the index');
       await this.event(runId, 'memory', 'retrieved', `${memories.length} prior episodes retrieved from ${this.store.mode === 'atlas' ? 'Atlas Vector Search' : 'simulated memory'}.`, { memories: memories.map(({ id, summary, score, source }) => ({ id, summary, score, source })) });
+      await this.runEngineeredVersion(runId, session, policyForVersion(policies, 'v2'), memories);
       let promoted = false;
       let promotedPolicy = null as ReturnType<typeof candidatePolicy> | null;
       let counterexamples: string[] = [];
@@ -135,9 +168,15 @@ export class DemoCoordinator {
       const improved = await this.agents.runTask(promotedPolicy, makeTools(this.store, session), async (tool, result) => {
         improvedTools.push({ name: tool, result });
         await this.event(runId, 'improved', 'tool', `${tool} → ${JSON.stringify(result)}`, { tool, result });
-      });
+      }, memories);
       const finalReality = await verifyReality(this.store, session);
       const improvedVerified = improved.claim === 'success' && finalReality.outcomeSucceeded && improved.toolNames.includes('verify_entitlement');
+      await this.event(runId, 'improved', 'version-outcome', `Harness v3: ${improved.claim}; entitlement ${finalReality.customer.entitlementActive ? 'active' : 'inactive'}.`, {
+        version: 'v3', claim: improved.claim, verified: improvedVerified, paymentSucceeded: finalReality.paymentSucceeded,
+        entitlementActive: finalReality.customer.entitlementActive, toolNames: improved.toolNames,
+        paymentReused: (improvedTools.find(item => item.name === 'charge_customer')?.result as { reused?: boolean } | undefined)?.reused ?? false,
+        memoryCount: memories.length, model: improved.model,
+      });
       await this.observe(runId, session, 'v3', improved.claim, finalReality.paymentSucceeded, finalReality.customer.entitlementActive, improvedVerified, improvedTools);
       await this.store.finishRun(runId, { improvedClaim: improved.claim, improvedVerified, status: 'completed', completedAt: new Date().toISOString() });
       await this.event(runId, 'improved', improvedVerified ? 'verified-success' : 'escalated', improvedVerified ? 'VERIFIED SUCCESS: Maya has Pro access.' : 'Upgrade was not verified; escalated.', { claim: improved.claim, entitlementActive: finalReality.customer.entitlementActive, paymentSucceeded: finalReality.paymentSucceeded, prompt: improved.prompt, model: improved.model });

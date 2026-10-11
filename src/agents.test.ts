@@ -90,6 +90,23 @@ describe('OpenAI Responses tool loop', () => {
     expect((await store.getCustomer(session.customerId)).entitlementActive).toBe(false);
   });
 
+  it('passes Atlas memories to v2 but does not grant a reconciliation tool', async () => {
+    const { store, session, trace } = await setup();
+    const { agent, create } = scripted([
+      response('r1', [call('charge_customer', 'c1')]),
+      response('r2', [call('upgrade_customer', 'c2')]),
+      response('r3', [call('verify_entitlement', 'c3')]),
+      final('escalate'),
+    ]);
+    const memory = { id: 'prior', sessionId: 'prior', runId: 'prior', source: 'simulated-seed' as const, version: 'v0' as const, summary: '200 OK with missing entitlement', claim: 'success' as const, paymentSucceeded: true, entitlementActive: false, createdAt: '2026-10-11' };
+    const outcome = await agent.runTask(initialPolicies[2], makeTools(store, session), trace, [memory]);
+    expect(outcome.claim).toBe('escalate');
+    expect(outcome.prompt).toContain(memory.summary);
+    const firstRequest = create.mock.calls[0][0] as { tools: { name: string }[] };
+    expect(firstRequest.tools.map(tool => tool.name)).not.toContain('reconcile_entitlement');
+    expect((await store.getCustomer(session.customerId)).entitlementActive).toBe(false);
+  });
+
   it('rejects verification before the upgrade and reconciliation before a failed check', async () => {
     const { store, session, trace } = await setup();
     const prematureCheck = scripted([response('r1', [call('verify_entitlement', 'c1')])]);

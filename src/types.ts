@@ -44,7 +44,7 @@ export interface Policy {
 export interface RunEvent {
   seq: number;
   at: string;
-  phase: 'setup' | 'baseline' | 'verify' | 'memory' | 'propose' | 'eval' | 'promote' | 'improved' | 'system';
+  phase: 'setup' | 'baseline' | 'v1' | 'v2' | 'verify' | 'memory' | 'propose' | 'eval' | 'promote' | 'improved' | 'system';
   kind: string;
   message: string;
   data?: Record<string, unknown>;

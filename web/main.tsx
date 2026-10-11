@@ -6,8 +6,9 @@ import './style.css';
 type Event = { seq: number; at: string; phase: string; kind: string; message: string; data?: Record<string, unknown> };
 type Ready = { database: boolean; memoryIndex: boolean; storage: string; agents: string; model: string; liveReady: boolean; raindropConfigured: boolean };
 type Session = { id: string; fault: string; customerId: string };
-type Case = { id: string; passed: boolean; category: string; detail: string };
-type Evaluation = { id: string; passed: boolean; results: Case[] };
+type Case = { id: string; passed: boolean; falseSuccess: boolean; category: string; detail: string };
+type Evaluation = { id: string; version: string; passed: boolean; results: Case[] };
+type VersionOutcome = { version: string; claim: 'success' | 'escalate'; verified: boolean; paymentSucceeded: boolean; entitlementActive: boolean; paymentReused: boolean; toolNames: string[]; memoryCount: number; model: string };
 type Episode = { id: string; summary: string; score?: number; source: string };
 type Evidence = { run: { status: string; baselineClaim?: string; baselineVerified?: boolean; improvedClaim?: string; improvedVerified?: boolean }; customer: { name: string; entitlementActive: boolean }; payment: { id: string } | null; episodes: Episode[]; policies: { id: string; version: string; status: string; explanation: string }[]; evals: Evaluation[]; activeVersion: string };
 
@@ -20,6 +21,16 @@ async function json<T>(path: string, options?: RequestInit): Promise<T> {
 
 function FlowLane({ label, steps }: { label: string; steps: FlowStep[] }) {
   return <div className="flow-lane"><div className="flow-lane-label">{label}</div><div className="flow-nodes">{steps.map((step, index) => <div className={`flow-node ${step.status}`} key={step.id}><div className="flow-node-top"><span>{step.system}</span><span className="flow-node-state">{step.status === 'issue' ? 'ISSUE' : step.status === 'done' ? 'DONE' : step.status === 'running' ? 'LIVE' : 'WAITING'}</span></div><strong>{step.action}</strong><small>{step.detail}</small>{index < steps.length - 1 && <span className="flow-arrow" aria-hidden="true">→</span>}</div>)}</div></div>;
+}
+
+function ComparisonCard({ version, label, evaluation, outcome, running }: { version: string; label: string; evaluation?: Evaluation; outcome?: VersionOutcome; running: boolean }) {
+  const result = outcome ? outcome.verified ? 'VERIFIED ACCESS' : outcome.claim === 'success' ? 'FALSE SUCCESS' : 'SAFE ESCALATION' : running ? 'AGENT RUNNING…' : 'WAITING';
+  return <article className={`compare-card ${outcome ? outcome.verified ? 'verified' : outcome.claim === 'success' ? 'false' : 'safe' : running ? 'running' : ''}`}>
+    <div className="compare-top"><span>{version}</span><strong>{label}</strong></div>
+    <div className="compare-result" aria-live="polite">{result}</div>
+    <div className="compare-facts"><span>REPLAY <b>{evaluation ? `${evaluation.results.filter(item => item.passed).length}/18` : '—/18'}</b></span><span>ACCESS <b>{outcome ? outcome.entitlementActive ? 'ACTIVE' : 'LOCKED' : '—'}</b></span><span>PAYMENT <b>{outcome ? outcome.paymentReused ? 'REUSED' : 'FIRST CHARGE' : '—'}</b></span><span>MEMORY <b>{outcome ? outcome.memoryCount : '—'} HITS</b></span></div>
+    <div className="compare-tools">{outcome ? outcome.toolNames.join(' → ') : running ? 'Live tool calls appearing below…' : 'Awaiting live agent run'}</div>
+  </article>;
 }
 
 function App() {
@@ -78,14 +89,17 @@ function App() {
     const matches = events.filter(item => item.kind === 'results');
     return matches.at(-1)?.data?.evaluation as Evaluation | undefined;
   }, [events]);
-  const engineeredEvals = (events.find(item => item.kind === 'version-results')?.data?.evaluations ?? []) as (Evaluation & { version: string })[];
+  const engineeredEvals = events.filter(item => item.kind === 'version-result').map(item => item.data?.evaluation as Evaluation);
+  const versionOutcomes = events.filter(item => item.kind === 'version-outcome').map(item => item.data as VersionOutcome);
   const falseSuccess = events.some(event => event.kind === 'false-success');
   const verified = events.some(event => event.kind === 'verified-success');
   const promoted = events.some(event => event.kind === 'promoted');
   const raindropEvents = events.filter(event => event.kind === 'raindrop-recorded');
   const raindropError = events.some(event => event.kind === 'raindrop-error');
   const baselineClaimed = events.some(event => event.phase === 'baseline' && event.kind === 'claim');
-  const customerAccess = evidence?.customer.entitlementActive ?? verified;
+  const latestEntitlementRead = events.filter(event => event.kind === 'tool' && event.data?.tool === 'verify_entitlement').at(-1)?.data?.result as { entitlementActive?: boolean } | undefined;
+  const customerAccess = evidence?.customer.entitlementActive ?? latestEntitlementRead?.entitlementActive ?? verified;
+  const runFinished = events.some(event => ['verified-success', 'escalated', 'error'].includes(event.kind));
   const flowSteps = useMemo(() => deriveLiveFlow(events, session?.fault === 'silent'), [events, session?.fault]);
 
   async function breakProvider() {
@@ -133,11 +147,18 @@ function App() {
       </section>
       <div className="metric-note">PROMOTION METRIC <strong>18/18 REPLAY CASES</strong> + ZERO FALSE-SUCCESS CLAIMS + ZERO DUPLICATE CHARGES. <span>v1/v2 are engineered; v3 is model-proposed and replay-gated.</span></div>
 
+      <section className="comparison" aria-label="Four harness versions compared live">
+        <div className="comparison-head"><div><span className="flow-kicker">LIVE FOUR-VERSION COMPARISON</span><h2>Same model. Same fault. Different harness.</h2></div><span>{versionOutcomes.length}/4 AGENT RUNS COMPLETE</span></div>
+        <div className="comparison-grid">{[['v0', 'TRUSTS 200 OK'], ['v1', 'VERIFIES OUTCOME'], ['v2', 'VERIFIES + USES MEMORY'], ['v3', 'RECONCILES + REVERIFIES']].map(([version, label]) => <ComparisonCard key={version} version={version} label={label} evaluation={version === 'v3' ? latestEval : engineeredEvals.find(item => item.version === version)} outcome={versionOutcomes.find(item => item.version === version)} running={!runFinished && events.some(item => item.kind === 'version' && item.data?.version === version) && !versionOutcomes.some(item => item.version === version)} />)}</div>
+        {runFinished && !versionOutcomes.length && <p className="comparison-note">This stored run predates the four-version live comparison. Click Reset Demo to run all four agents.</p>}
+        <p className="comparison-note">Live outcome = actual model tool calls + independent Atlas state read. Replay score = separate deterministic 18-case evaluation. v0 charges once; v1–v3 reuse that payment idempotently.</p>
+      </section>
+
       <section className="live-flow" aria-label="Live working flow">
         <div className="live-flow-head"><div><span className="flow-kicker">LIVE SYSTEM FLOW</span><h2>Follow the evidence, not an animation.</h2></div><span className="flow-source">{runId ? `ATLAS RUN ${runId.slice(0, 8).toUpperCase()}` : 'WAITING FOR A RUN'}</span></div>
         <FlowLane label="01 / DETECT THE FALSE SUCCESS" steps={flowSteps.slice(0, 4)} />
         <FlowLane label="02 / EVOLVE AND VERIFY" steps={flowSteps.slice(4)} />
-        <div className="flow-monitor" aria-live="polite"><span>RAINDROP MONITORING ↗</span><strong>{!ready?.raindropConfigured ? 'NOT CONFIGURED' : raindropError ? 'TELEMETRY ERROR' : `${raindropEvents.length}/2 OUTCOMES RECORDED`}</strong><small>Observes v0 and v3 traces. It does not control policy promotion.</small></div>
+        <div className="flow-monitor" aria-live="polite"><span>RAINDROP MONITORING ↗</span><strong>{!ready?.raindropConfigured ? 'NOT CONFIGURED' : raindropError ? 'TELEMETRY ERROR' : `${raindropEvents.length}/4 OUTCOMES RECORDED`}</strong><small>Observes all four agent traces. It does not control policy promotion.</small></div>
       </section>
 
       <section className="stage-grid">
@@ -145,7 +166,7 @@ function App() {
           <div className="panel-heading"><span className="panel-index">01</span><span>TASK AGENT</span><span className="panel-marker">{baselineClaimed ? '●' : '○'}</span></div>
           <div className="panel-intro">“Upgrade Maya to Pro.”</div>
           <div className="timeline" aria-live="polite">
-            {events.filter(event => ['baseline','improved'].includes(event.phase) && ['tool','claim','version','verified-success','escalated'].includes(event.kind)).map(event => <div className={`timeline-row ${event.phase}`} key={event.seq}><span className="time">{String(event.seq).padStart(2,'0')}</span><span className="phase-tag">{event.phase === 'baseline' ? 'v0' : 'v3'}</span><span>{event.message}</span></div>)}
+            {events.filter(event => ['baseline','v1','v2','improved'].includes(event.phase) && ['tool','claim','version','verified-success','escalated'].includes(event.kind)).map(event => <div className={`timeline-row ${event.phase}`} key={event.seq}><span className="time">{String(event.seq).padStart(2,'0')}</span><span className="phase-tag">{event.phase === 'baseline' ? 'v0' : event.phase === 'improved' ? 'v3' : event.phase}</span><span>{event.message}</span></div>)}
             {!events.length && <div className="empty">Waiting for the first action…</div>}
           </div>
         </article>
@@ -168,7 +189,7 @@ function App() {
           <div className="contract">payment_succeeded <span>→</span><br />entitlement_active</div>
           <div className={`verdict ${verified ? 'positive' : falseSuccess ? 'negative' : ''}`}>{verified ? 'VERIFIED SUCCESS' : falseSuccess ? 'FALSE SUCCESS' : 'AWAITING VERIFICATION'}</div>
           <div className="verdict-copy">{verified ? 'The customer really has Pro access.' : falseSuccess ? 'The model said complete. Customer state disagrees.' : 'SHAPI will inspect the actual customer record.'}</div>
-          {ready?.raindropConfigured && <div className="raindrop-status">RAINDROP · {raindropError ? 'TELEMETRY ERROR' : `${raindropEvents.length}/2 OUTCOMES RECORDED`}</div>}
+          {ready?.raindropConfigured && <div className="raindrop-status">RAINDROP · {raindropError ? 'TELEMETRY ERROR' : `${raindropEvents.length}/4 OUTCOMES RECORDED`}</div>}
         </article>
       </section>
 

@@ -63,7 +63,7 @@ describe('deterministic promotion gate', () => {
 });
 
 describe('full coordinator flow', () => {
-  it('records baseline and recovery outcomes without letting telemetry govern promotion', async () => {
+  it('records all four live agent outcomes without letting telemetry govern promotion', async () => {
     const store = new MemoryStore();
     await seedHistory(store);
     const session = await store.createSession();
@@ -75,10 +75,17 @@ describe('full coordinator flow', () => {
     for (let attempt = 0; attempt < 100 && (await store.getRun(runId))?.status === 'running'; attempt++) await new Promise(resolve => setTimeout(resolve, 10));
     const evidence = await coordinator.evidence(runId);
     expect(evidence.run.status).toBe('completed');
-    expect(outcomes.map(item => [item.version, item.claim, item.verified])).toEqual([['v0', 'success', false], ['v3', 'success', true]]);
+    expect(outcomes.map(item => [item.version, item.claim, item.verified])).toEqual([['v0', 'success', false], ['v1', 'escalate', false], ['v2', 'escalate', false], ['v3', 'success', true]]);
     expect(outcomes[0].tools.map(tool => tool.name)).toContain('upgrade_customer');
-    expect(outcomes[1].tools.map(tool => tool.name)).toContain('reconcile_entitlement');
-    expect(evidence.run.events.filter(item => item.kind === 'raindrop-recorded')).toHaveLength(2);
+    expect(outcomes[1].tools.map(tool => tool.name)).not.toContain('reconcile_entitlement');
+    expect(outcomes[2].tools.map(tool => tool.name)).not.toContain('reconcile_entitlement');
+    expect(outcomes[3].tools.map(tool => tool.name)).toContain('reconcile_entitlement');
+    expect(evidence.run.events.filter(item => item.kind === 'raindrop-recorded')).toHaveLength(4);
+    const liveOutcomes = evidence.run.events.filter(item => item.kind === 'version-outcome').map(item => item.data);
+    expect(liveOutcomes.map(item => item?.version)).toEqual(['v0', 'v1', 'v2', 'v3']);
+    expect(liveOutcomes.map(item => item?.entitlementActive)).toEqual([false, false, false, true]);
+    expect(liveOutcomes.map(item => item?.paymentReused)).toEqual([false, true, true, true]);
+    expect(liveOutcomes.map(item => item?.memoryCount)).toEqual([0, 0, 3, 3]);
     expect(evidence.activeVersion).toBe('v3');
   });
 
@@ -93,7 +100,7 @@ describe('full coordinator flow', () => {
     for (let attempt = 0; attempt < 100 && (await store.getRun(runId))?.status === 'running'; attempt++) await new Promise(resolve => setTimeout(resolve, 10));
     const evidence = await coordinator.evidence(runId);
     expect(evidence.run.status).toBe('completed');
-    expect(evidence.run.events.filter(item => item.kind === 'raindrop-error')).toHaveLength(2);
+    expect(evidence.run.events.filter(item => item.kind === 'raindrop-error')).toHaveLength(4);
     expect(evidence.activeVersion).toBe('v3');
   });
 

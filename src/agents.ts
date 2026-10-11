@@ -16,7 +16,7 @@ export interface TaskOutcome { claim: Claim; message: string; prompt: string; mo
 export interface ProposalOutcome { proposal: z.infer<typeof ProposalSchema>; prompt: string; model: string }
 export interface Agents {
   model: string;
-  runTask(policy: Policy, tools: AgentTools, trace: (tool: string, result: Record<string, unknown>) => Promise<void>): Promise<TaskOutcome>;
+  runTask(policy: Policy, tools: AgentTools, trace: (tool: string, result: Record<string, unknown>) => Promise<void>, memories?: Episode[]): Promise<TaskOutcome>;
   propose(incident: string, memories: Episode[], counterexamples: string[]): Promise<ProposalOutcome>;
 }
 
@@ -43,9 +43,9 @@ export class OpenAIAgents implements Agents {
     this.client = client ?? new OpenAI({ apiKey, timeout: 30000, maxRetries: 1 });
   }
 
-  async runTask(policy: Policy, tools: AgentTools, trace: (tool: string, result: Record<string, unknown>) => Promise<void>): Promise<TaskOutcome> {
+  async runTask(policy: Policy, tools: AgentTools, trace: (tool: string, result: Record<string, unknown>) => Promise<void>, memories: Episode[] = []): Promise<TaskOutcome> {
     const allowed = policy.maxReconcileAttempts ? ['charge_customer', 'upgrade_customer', 'verify_entitlement', 'reconcile_entitlement'] : policy.requireVerification ? ['charge_customer', 'upgrade_customer', 'verify_entitlement'] : ['charge_customer', 'upgrade_customer'];
-    const prompt = `You are the Task Agent. Complete the user's request: Upgrade Maya to Pro. Call charge_customer before upgrade_customer. Active harness policy: ${JSON.stringify({ requireVerification: policy.requireVerification, maxReconcileAttempts: policy.maxReconcileAttempts, onFailure: policy.onFailure })}. ${policy.requireVerification ? 'A tool HTTP status only confirms that the request was accepted. You must verify payment and entitlement before claiming success. If inactive, reconcile once if allowed and verify again. Escalate if still inactive.' : 'Under this baseline policy, a 200 upgrade response counts as completion. Report success after a successful charge and 200 upgrade response.'} Never invent a tool result. Final output must be JSON.`;
+    const prompt = `You are the Task Agent. Complete the user's request: Upgrade Maya to Pro. Call charge_customer before upgrade_customer. Active harness policy: ${JSON.stringify({ requireVerification: policy.requireVerification, maxReconcileAttempts: policy.maxReconcileAttempts, onFailure: policy.onFailure })}. ${policy.requireVerification ? 'A tool HTTP status only confirms that the request was accepted. You must verify payment and entitlement before claiming success. If inactive, reconcile once if allowed and verify again. Escalate if still inactive.' : 'Under this baseline policy, a 200 upgrade response counts as completion. Report success after a successful charge and 200 upgrade response.'} ${policy.useMemory ? `Relevant prior incidents from Atlas: ${JSON.stringify(memories.map(({ summary, score }) => ({ summary, score })))}. Treat these as context, not permission to use unavailable tools.` : ''} Never invent a tool result. Final output must be JSON.`;
     const toolDefinitions = allowed.map(name => ({ type: 'function' as const, name, description: ({ charge_customer: 'Charge Maya for Pro; idempotent.', upgrade_customer: policy.requireVerification ? 'Request Pro upgrade; may return 200 while entitlement is inactive.' : 'Request Pro upgrade.', verify_entitlement: 'Read payment and actual entitlement state independently.', reconcile_entitlement: 'Grant entitlement after confirming the successful payment.' } as Record<string, string>)[name], parameters: emptyParameters, strict: true }));
     let input: unknown = [{ role: 'user', content: 'Upgrade Maya to Pro.' }];
     let previousResponseId: string | undefined;
@@ -92,7 +92,7 @@ export class OpenAIAgents implements Agents {
 // Explicit development mode. The UI marks runs made with this adapter as simulated.
 export class SimulatedAgents implements Agents {
   readonly model = 'simulated-agent';
-  async runTask(policy: Policy, tools: AgentTools, trace: (tool: string, result: Record<string, unknown>) => Promise<void>): Promise<TaskOutcome> {
+  async runTask(policy: Policy, tools: AgentTools, trace: (tool: string, result: Record<string, unknown>) => Promise<void>, _memories: Episode[] = []): Promise<TaskOutcome> {
     const toolNames: string[] = [];
     for (const name of ['charge_customer', 'upgrade_customer'] as const) {
       const result = await tools[name](); toolNames.push(name); await trace(name, result);
