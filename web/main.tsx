@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { deriveLiveFlow, type FlowStep } from './flow-state';
 import './style.css';
 
 type Event = { seq: number; at: string; phase: string; kind: string; message: string; data?: Record<string, unknown> };
@@ -15,6 +16,10 @@ async function json<T>(path: string, options?: RequestInit): Promise<T> {
   const body = await response.json();
   if (!response.ok) throw new Error(body.error ?? `Request failed: ${response.status}`);
   return body as T;
+}
+
+function FlowLane({ label, steps }: { label: string; steps: FlowStep[] }) {
+  return <div className="flow-lane"><div className="flow-lane-label">{label}</div><div className="flow-nodes">{steps.map((step, index) => <div className={`flow-node ${step.status}`} key={step.id}><div className="flow-node-top"><span>{step.system}</span><span className="flow-node-state">{step.status === 'issue' ? 'ISSUE' : step.status === 'done' ? 'DONE' : step.status === 'running' ? 'LIVE' : 'WAITING'}</span></div><strong>{step.action}</strong><small>{step.detail}</small>{index < steps.length - 1 && <span className="flow-arrow" aria-hidden="true">→</span>}</div>)}</div></div>;
 }
 
 function App() {
@@ -81,6 +86,7 @@ function App() {
   const raindropError = events.some(event => event.kind === 'raindrop-error');
   const baselineClaimed = events.some(event => event.phase === 'baseline' && event.kind === 'claim');
   const customerAccess = evidence?.customer.entitlementActive ?? verified;
+  const flowSteps = useMemo(() => deriveLiveFlow(events, session?.fault === 'silent'), [events, session?.fault]);
 
   async function breakProvider() {
     if (!session) return;
@@ -123,7 +129,15 @@ function App() {
       </section>
 
       <section className="version-track" aria-label="Harness versions">
-        {[['v0','TRUST RESPONSE'],['v1','VERIFY OUTCOME'],['v2','MEMORY'],['v3','REPLAY + PROMOTE']].map(([version, label], index) => { const evaluation = index === 3 ? latestEval : engineeredEvals.find(item => item.version === version); return <div className={`version-step ${index === 3 && promoted ? 'active' : index <= 2 ? 'built' : ''}`} key={version}><span>{version}</span><strong>{label}</strong><small>{evaluation ? `${evaluation.results.filter(item => item.passed).length}/18 PASS` : '— /18'}</small></div>; })}
+        {[['v0','TRUST RESPONSE'],['v1','VERIFY OUTCOME'],['v2','MEMORY'],['v3','REPLAY + PROMOTE']].map(([version, label], index) => { const evaluation = index === 3 ? latestEval : engineeredEvals.find(item => item.version === version); return <div className={`version-step ${index === 3 && promoted ? 'active' : index <= 2 ? 'built' : ''}`} key={version}><span>{version}</span><strong>{label}</strong><small>{evaluation ? `${evaluation.results.filter(item => item.passed).length}/18 PASS · ${evaluation.results.filter(item => item.falseSuccess).length} FALSE CLAIMS` : '— /18'}</small></div>; })}
+      </section>
+      <div className="metric-note">PROMOTION METRIC <strong>18/18 REPLAY CASES</strong> + ZERO FALSE-SUCCESS CLAIMS + ZERO DUPLICATE CHARGES. <span>v1/v2 are engineered; v3 is model-proposed and replay-gated.</span></div>
+
+      <section className="live-flow" aria-label="Live working flow">
+        <div className="live-flow-head"><div><span className="flow-kicker">LIVE SYSTEM FLOW</span><h2>Follow the evidence, not an animation.</h2></div><span className="flow-source">{runId ? `ATLAS RUN ${runId.slice(0, 8).toUpperCase()}` : 'WAITING FOR A RUN'}</span></div>
+        <FlowLane label="01 / DETECT THE FALSE SUCCESS" steps={flowSteps.slice(0, 4)} />
+        <FlowLane label="02 / EVOLVE AND VERIFY" steps={flowSteps.slice(4)} />
+        <div className="flow-monitor" aria-live="polite"><span>RAINDROP MONITORING ↗</span><strong>{!ready?.raindropConfigured ? 'NOT CONFIGURED' : raindropError ? 'TELEMETRY ERROR' : `${raindropEvents.length}/2 OUTCOMES RECORDED`}</strong><small>Observes v0 and v3 traces. It does not control policy promotion.</small></div>
       </section>
 
       <section className="stage-grid">
