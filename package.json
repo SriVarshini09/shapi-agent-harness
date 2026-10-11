@@ -1,0 +1,37 @@
+{
+  "name": "shapi-agent-harness",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently \"tsx watch src/server.ts\" \"vite --host 127.0.0.1\"",
+    "build": "tsc -p tsconfig.server.json && vite build",
+    "start": "node dist/server.js",
+    "test": "vitest run -c vitest.config.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.server.json && tsc --noEmit -p tsconfig.web.json",
+    "setup:atlas": "tsx src/setup-atlas.ts"
+  },
+  "dependencies": {
+    "@fastify/static": "*",
+    "dotenv": "*",
+    "fastify": "*",
+    "mongodb": "*",
+    "openai": "*",
+    "react": "*",
+    "react-dom": "*",
+    "zod": "*"
+  },
+  "devDependencies": {
+    "@types/node": "*",
+    "@types/react": "*",
+    "@types/react-dom": "*",
+    "@vitejs/plugin-react": "*",
+    "concurrently": "*",
+    "tsx": "*",
+    "typescript": "*",
+    "vite": "*",
+    "vitest": "*"
+  },
+  "engines": { "node": ">=20" },
+  "packageManager": "pnpm@12.4.2"
+}
