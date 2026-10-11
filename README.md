@@ -53,9 +53,9 @@ The server sends one interaction for each live harness version: `v0` false succe
 
 ## Judge flow
 
-1. **Break Provider** selects a silent-failure fault for this browser session.
+1. **Break Provider** selects a silent-failure fault for this browser session. The new on-screen fault panel names the exact target: the simulated `upgrade_customer` provider returns `200 OK` but skips the Pro-entitlement write. Stripe test payment is not broken. The panel distinguishes an armed fault from an observed mismatch.
 2. **Upgrade Maya** runs the Task Agent with v0. Its upgrade call returns `200 OK`, but the independent customer read shows Pro inactive. The event and episode are stored.
-3. The same model and request run with v1: it verifies and safely escalates. Atlas then retrieves prior simulated incidents; v2 receives them as context and also safely escalates because it still cannot reconcile. The four-version comparison shows each live claim, customer state, tool sequence, payment reuse, memory hits, and separately measured replay score as events arrive.
+3. The page scrolls to a live v0→v3 evolution ladder as the run starts. The same model and request run with v1: it verifies and safely escalates. Atlas then retrieves prior simulated incidents; v2 receives them as context and also safely escalates because it still cannot reconcile. Each ladder card shows the harness change, engineered/model-proposed origin, running state, live claim and customer access, and separately measured replay score. The four-version comparison below shows tool sequence, payment reuse, and memory hits.
 4. The proposer can submit one candidate and, if replay rejects it, revise once using counterexamples.
 5. The promotion gate runs 18 deterministic fixtures across normal success, silent `200`, delayed access, malformed responses, duplicate requests, and provider drift. All must pass, with zero false-success claims and zero duplicate charges. Evals do not call the model.
 6. If v3 is promoted, the Task Agent repeats the same customer request. The payment is reused via idempotency, the entitlement is checked, reconciliation is allowed once after a failed check, and success requires a final independent verification.

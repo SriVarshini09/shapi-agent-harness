@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { deriveLiveFlow, type FlowStep } from './flow-state';
+import { deriveEvolution, deriveFaultEvidence, type EvolutionStep } from './evolution-state';
 import './style.css';
 
 type Event = { seq: number; at: string; phase: string; kind: string; message: string; data?: Record<string, unknown> };
@@ -30,6 +31,17 @@ function ComparisonCard({ version, label, evaluation, outcome, running }: { vers
     <div className="compare-result" aria-live="polite">{result}</div>
     <div className="compare-facts"><span>REPLAY <b>{evaluation ? `${evaluation.results.filter(item => item.passed).length}/18` : '—/18'}</b></span><span>ACCESS <b>{outcome ? outcome.entitlementActive ? 'ACTIVE' : 'LOCKED' : '—'}</b></span><span>PAYMENT <b>{outcome ? outcome.paymentReused ? 'REUSED' : 'FIRST CHARGE' : '—'}</b></span><span>MEMORY <b>{outcome ? outcome.memoryCount : '—'} HITS</b></span></div>
     <div className="compare-tools">{outcome ? outcome.toolNames.join(' → ') : running ? 'Live tool calls appearing below…' : 'Awaiting live agent run'}</div>
+  </article>;
+}
+
+function EvolutionCard({ step }: { step: EvolutionStep }) {
+  return <article className={`evolution-card ${step.stage} ${step.result === 'FALSE SUCCESS' ? 'false' : ''} ${step.result === 'VERIFIED RECOVERY' ? 'verified' : ''}`}>
+    <div className="evolution-card-top"><strong>{step.version}</strong><span>{step.origin}</span><em>{step.stage === 'complete' ? 'OBSERVED' : step.stage === 'running' ? 'RUNNING' : 'WAITING'}</em></div>
+    <h3>{step.change}</h3>
+    <div className="evolution-capability">{step.capability}</div>
+    <div className="evolution-result" aria-live="polite">{step.result}</div>
+    <div className="evolution-measures"><span>AGENT CLAIM <b>{step.claim}</b></span><span>CUSTOMER <b>{step.access}</b></span><span>REPLAY <b>{step.replay}</b></span></div>
+    {step.memoryHits !== null && step.version !== 'v0' && <div className="evolution-foot">{step.memoryHits} PRIOR MEMORY HITS · {step.toolNames.length} TOOL CALLS</div>}
   </article>;
 }
 
@@ -102,6 +114,10 @@ function App() {
   const runFinished = events.some(event => ['verified-success', 'escalated', 'error'].includes(event.kind));
   const liveMode = ready?.liveReady === true;
   const flowSteps = useMemo(() => deriveLiveFlow(events, session?.fault === 'silent', liveMode), [events, session?.fault, liveMode]);
+  const evolution = useMemo(() => deriveEvolution(events), [events]);
+  const faultEvidence = useMemo(() => deriveFaultEvidence(events, session?.fault === 'silent'), [events, session?.fault]);
+  const latestCandidate = events.filter(event => event.kind === 'candidate').at(-1)?.data?.candidate as { explanation?: string; maxReconcileAttempts?: number } | undefined;
+  const runningVersion = evolution.find(step => step.stage === 'running')?.version;
 
   async function breakProvider() {
     if (!session) return;
@@ -115,6 +131,7 @@ function App() {
       const result = await json<{ runId: string }>('/api/demo/runs', { method: 'POST', body: JSON.stringify({ sessionId: session.id }) });
       sessionStorage.setItem('shapiRunId', result.runId);
       setRunId(result.runId);
+      document.getElementById('harness-evolution')?.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth', block: 'start' });
     } catch (error) { setBusy(false); setError(String(error)); }
   }
   async function reset() {
@@ -126,7 +143,7 @@ function App() {
     <header className="topbar">
       <div className="brand"><span className="brand-symbol">✳</span><span>SHAPI <small>AGENT HARNESS</small></span></div>
       <div className="top-center">DOES REALITY AGREE?</div>
-      <div className="status-group"><span className={`status-dot ${ready?.liveReady ? 'live' : ''}`} />{ready?.liveReady ? `LIVE ATLAS + MODEL / ${ready.paymentProvider === 'stripe-test' ? 'STRIPE TEST' : 'SIM PAYMENT'}` : ready ? `${ready.storage.toUpperCase()} / ${ready.agents.toUpperCase()} / ${ready.paymentProvider === 'stripe-test' ? 'STRIPE TEST' : 'SIM PAYMENT'}` : 'CONNECTING'}<span className="version-pill">HARNESS {promoted ? 'v3' : 'v2'}</span></div>
+      <div className="status-group"><span className={`status-dot ${ready?.liveReady ? 'live' : ''}`} />{ready?.liveReady ? `LIVE ATLAS + MODEL / ${ready.paymentProvider === 'stripe-test' ? 'STRIPE TEST' : 'SIM PAYMENT'}` : ready ? `${ready.storage.toUpperCase()} / ${ready.agents.toUpperCase()} / ${ready.paymentProvider === 'stripe-test' ? 'STRIPE TEST' : 'SIM PAYMENT'}` : 'CONNECTING'}<span className="version-pill">{runId && !runFinished ? `RUNNING ${runningVersion ?? 'STARTING'}` : `ACTIVE POLICY ${promoted ? 'v3' : 'v2'}`}</span></div>
     </header>
 
     <main>
@@ -144,10 +161,19 @@ function App() {
         {ready?.liveReady && ready.paymentProvider !== 'stripe-test' && <div className="dev-note">Payment is still simulated. Add a Stripe test secret key to enable a real Stripe API call; no money moves in test mode.</div>}
       </section>
 
-      <section className="version-track" aria-label="Harness versions">
-        {[['v0','TRUST RESPONSE'],['v1','VERIFY OUTCOME'],['v2','MEMORY'],['v3','REPLAY + PROMOTE']].map(([version, label], index) => { const evaluation = index === 3 ? latestEval : engineeredEvals.find(item => item.version === version); return <div className={`version-step ${index === 3 && promoted ? 'active' : index <= 2 ? 'built' : ''}`} key={version}><span>{version}</span><strong>{label}</strong><small>{evaluation ? `${evaluation.results.filter(item => item.passed).length}/18 PASS · ${evaluation.results.filter(item => item.falseSuccess).length} FALSE CLAIMS` : '— /18'}</small></div>; })}
+      <section className={`fault-lab ${faultEvidence.armed ? 'armed' : ''}`} aria-label="What Break Provider changes">
+        <div className="fault-lab-head"><div><span className="flow-kicker">FAULT INJECTION / WHAT WE BREAK</span><h2>{faultEvidence.armed ? 'The upgrade acknowledgment lies.' : 'Arm a silent upgrade failure.'}</h2></div><strong>{faultEvidence.armed ? 'SILENT FAILURE ARMED' : 'NORMAL PROVIDER'}</strong></div>
+        <p><strong>Break Provider</strong> targets only the <code>simulated upgrade_customer</code> provider. When armed, it returns <code>200 OK</code> but skips the Pro-entitlement write. {ready?.paymentProvider === 'stripe-test' ? 'Stripe remains a real test-mode API; no money moves.' : 'Payment is simulated in this mode.'}</p>
+        <div className="fault-chain"><div><span>01 / PAYMENT</span><strong>{faultEvidence.payment}</strong>{faultEvidence.paymentId && <small>{faultEvidence.paymentId}</small>}</div><span className="fault-arrow">→</span><div><span>02 / UPGRADE API</span><strong>{faultEvidence.upgrade}</strong></div><span className="fault-arrow">{faultEvidence.armed ? '≠' : '→'}</span><div className={faultEvidence.mismatch ? 'fault-mismatch' : ''}><span>03 / {ready?.storage === 'atlas' ? 'ATLAS' : 'LOCAL'} GROUND TRUTH</span><strong>{faultEvidence.entitlement}</strong></div></div>
+        {faultEvidence.mismatch && <div className="fault-verdict">OBSERVED MISMATCH: accepted request ≠ customer access. {faultEvidence.recovered ? 'v3 later restored access through a separate, verified reconciliation.' : 'SHAPI now tests a safer policy.'}</div>}
       </section>
-      <div className="metric-note">PROMOTION METRIC <strong>18/18 REPLAY CASES</strong> + ZERO FALSE-SUCCESS CLAIMS + ZERO DUPLICATE CHARGES. <span>v1/v2 are engineered; v3 is model-proposed and replay-gated.</span></div>
+
+      <section className="evolution" id="harness-evolution" aria-label="Live harness evolution">
+        <div className="evolution-head"><div><span className="flow-kicker">LIVE HARNESS EVOLUTION / v0 → v3</span><h2>Watch the rule change, not the model weights.</h2></div><span>2 AGENT ROLES · 4 TASK RUNS · SAME {ready?.model ?? 'MODEL'}</span></div>
+        <p>v1 and v2 are engineered harness upgrades. The Policy Proposer suggests v3; the 18-case deterministic replay gate must approve it before the Task Agent receives reconciliation permission.</p>
+        <div className="evolution-grid">{evolution.map(step => <EvolutionCard key={step.version} step={step} />)}</div>
+        <div className="evolution-gate">PROMOTION GATE <strong>18/18 REPLAY CASES</strong> · ZERO FALSE-SUCCESS CLAIMS · ZERO DUPLICATE CHARGES <span>Scores are replay results, not live-run success rates.</span></div>
+      </section>
 
       <section className="comparison" aria-label="Four harness versions compared live">
         <div className="comparison-head"><div><span className="flow-kicker">{liveMode ? 'LIVE FOUR-VERSION COMPARISON' : 'SIMULATED FOUR-VERSION COMPARISON'}</span><h2>Same model. Same fault. Different harness.</h2></div><span>{versionOutcomes.length}/4 AGENT RUNS COMPLETE</span></div>
@@ -197,7 +223,7 @@ function App() {
 
       <section className="learning-grid">
         <article className="panel memory-panel"><div className="panel-heading"><span className="panel-index">04</span><span>{ready?.storage === 'atlas' ? 'ATLAS MEMORY' : 'LOCAL MEMORY'}</span><span className="panel-marker">◌</span></div><div className="subheading">RETRIEVED EPISODES</div>{memories.length ? memories.map((memory, i) => <div className="memory-card" key={memory.id}><span className="memory-number">0{i+1}</span><p>{memory.summary}</p><span className="score">{memory.score == null ? '—' : `${Math.round(memory.score * 100)}%`} MATCH</span></div>) : <div className="empty">Similar incidents appear here after the first failure.</div>}</article>
-        <article className="panel repair-panel"><div className="panel-heading"><span className="panel-index">05</span><span>POLICY PROPOSER</span><span className="panel-marker">⌘</span></div><div className="subheading">CANDIDATE GUARDRAIL</div>{events.filter(e => e.kind === 'candidate').at(-1) ? <div className="policy-card"><span>+ NEW RULE</span><p>{String((events.filter(e => e.kind === 'candidate').at(-1)?.data?.candidate as { explanation?: string })?.explanation ?? '')}</p><div>VERIFY → RECONCILE ONCE → VERIFY → ESCALATE</div></div> : <div className="empty">The proposer waits for a verified incident and {liveMode ? 'Atlas' : 'local'} memory.</div>}<div className="policy-status">{promoted ? '● POLICY PROMOTED TO v3' : events.some(e => e.kind === 'rejected') ? '● CANDIDATE REJECTED · REVISING' : '○ AWAITING REPLAY'}</div></article>
+        <article className="panel repair-panel"><div className="panel-heading"><span className="panel-index">05</span><span>POLICY PROPOSER</span><span className="panel-marker">⌘</span></div><div className="subheading">CANDIDATE GUARDRAIL</div>{latestCandidate ? <div className="policy-card"><span>+ NEW RULE</span><p>{latestCandidate.explanation ?? ''}</p><div>{latestCandidate.maxReconcileAttempts === 1 ? 'VERIFY → RECONCILE ONCE → VERIFY → ESCALATE IF NEEDED' : 'VERIFY → ESCALATE IF ACCESS IS INACTIVE'}</div></div> : <div className="empty">The proposer waits for a verified incident and {liveMode ? 'Atlas' : 'local'} memory.</div>}<div className="policy-status">{promoted ? '● POLICY PROMOTED TO v3' : events.some(e => e.kind === 'rejected') ? '● CANDIDATE REJECTED · REVISING' : '○ AWAITING REPLAY'}</div></article>
       </section>
 
       <section className="panel replay-panel"><div className="panel-heading"><span className="panel-index">06</span><span>REPLAY GATE</span><span className="panel-marker">↻</span></div><div className="replay-body"><div><div className="replay-count">{latestEval ? latestEval.results.filter(item => item.passed).length : '—'}<span>/18</span></div><p>Distinct outcome scenarios.<br />Every tile is a measured result.</p></div><div className="tiles">{Array.from({length:18}, (_,i) => { const item = latestEval?.results[i]; return <div className={`tile ${item ? item.passed ? 'pass' : 'fail' : ''}`} title={item?.detail ?? `Case ${i+1} pending`} key={i}>{item ? item.passed ? '✓' : '×' : '·'}</div>; })}</div><div className="replay-status">{promoted ? 'PROMOTION APPROVED' : latestEval ? latestEval.passed ? 'ALL CHECKS PASSED' : 'REGRESSION FOUND' : 'WAITING FOR CANDIDATE'}</div></div></section>
