@@ -39,6 +39,12 @@ The server writes `shapi_harness` collections: `demo_sessions`, `customers`, `pa
 
 The live demo makes real OpenAI Responses API calls. It uses function calls for the Task Agent and a schema-constrained JSON proposal for the Policy Proposer. Every candidate records the returned model ID and the prompt. Atlas Vector Search with Voyage-backed Automated Embedding supplies the prior incidents. The live path performs one memory retrieval per demo run.
 
+## Optional Raindrop outcome monitoring
+
+Add `RAINDROP_WRITE_KEY` to the server's local `.env` (and optionally `RAINDROP_PROJECT_ID` for a non-default project). Never put the write key in browser code or Git. Restart the server after changing `.env`. `/api/ready` reports `raindropConfigured: true` when the SDK is enabled; this does **not** prove that Raindrop accepted an event. Run the demo and check the Raindrop outcome indicator and `raindrop-recorded` events in Atlas evidence, then confirm both interactions and their signals in the Raindrop project before claiming the partner integration in a submission.
+
+The server sends one interaction for the `v0` false-success claim and one for the `v3` verified recovery. Each uses the Atlas run ID as conversation ID, an opaque session ID as user ID, sanitized tool results, and a `false_success`, `verified_recovery`, or `safe_escalation` signal. Customer names, email addresses, payment IDs, raw prompts, and credentials are not sent. Raindrop is observational; Atlas remains the source of truth and telemetry failure never changes replay or promotion decisions.
+
 ## Judge flow
 
 1. **Break Provider** selects a silent-failure fault for this browser session.
@@ -65,6 +71,6 @@ pnpm start
 
 ## Deployment and event checklist
 
-Render deployment is not automatic. This directory needs a Git remote pushed to GitHub/GitLab/Bitbucket, Atlas credentials/network access, and an OpenAI key before a hosted service can work. Deploy as one Node web service with build command `pnpm install --frozen-lockfile && pnpm build`, start command `pnpm start`, health check `/api/ready`, and environment variables `MONGODB_URI`, `OPENAI_API_KEY`, `OPENAI_MODEL=gpt-6-luna`, `DEMO_STORAGE=atlas`, and `NODE_ENV=production`. Run `pnpm setup:atlas` before judging. Avoid an unrestricted public link without abuse/cost controls because each run invokes a paid model.
+Render deployment is not automatic. This directory needs a Git remote pushed to GitHub/GitLab/Bitbucket, Atlas credentials/network access, and an OpenAI key before a hosted service can work. Deploy as one Node web service with build command `pnpm install --frozen-lockfile && pnpm build`, start command `pnpm start`, health check `/api/ready`, and environment variables `MONGODB_URI`, `OPENAI_API_KEY`, `OPENAI_MODEL=gpt-6-luna`, `DEMO_STORAGE=atlas`, and `NODE_ENV=production`. Add `RAINDROP_WRITE_KEY` and optional `RAINDROP_PROJECT_ID` only after validating Raindrop delivery. Run `pnpm setup:atlas` before judging. Avoid an unrestricted public link without abuse/cost controls because each run invokes a paid model.
 
 At event check-in, confirm the actual submission deadline, format, judging criteria, and whether pre-existing SHAPI concepts/code are permitted. The public event brief did not state all of these. Disclose prior SHAPI inspiration and distinguish newly built side-project code from reused material.

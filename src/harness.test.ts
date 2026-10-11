@@ -6,6 +6,7 @@ import { MemoryStore } from './memory-store.js';
 import { candidatePolicy, initialPolicies } from './policies.js';
 import { seedHistory } from './seed.js';
 import { makeTools, verifyReality } from './simulator.js';
+import type { ObservedOutcome, OutcomeObserver } from './raindrop.js';
 
 describe('provider failure and payment safety', () => {
   it('returns 200 while access remains locked, then reconciles without a second payment', async () => {
@@ -62,6 +63,40 @@ describe('deterministic promotion gate', () => {
 });
 
 describe('full coordinator flow', () => {
+  it('records baseline and recovery outcomes without letting telemetry govern promotion', async () => {
+    const store = new MemoryStore();
+    await seedHistory(store);
+    const session = await store.createSession();
+    await store.setFault(session.id, 'silent');
+    const outcomes: ObservedOutcome[] = [];
+    const observer: OutcomeObserver = { async record(outcome) { outcomes.push(outcome); return `event-${outcomes.length}`; }, async close() {} };
+    const coordinator = new DemoCoordinator(store, new SimulatedAgents(), observer);
+    const runId = await coordinator.start(session.id);
+    for (let attempt = 0; attempt < 100 && (await store.getRun(runId))?.status === 'running'; attempt++) await new Promise(resolve => setTimeout(resolve, 10));
+    const evidence = await coordinator.evidence(runId);
+    expect(evidence.run.status).toBe('completed');
+    expect(outcomes.map(item => [item.version, item.claim, item.verified])).toEqual([['v0', 'success', false], ['v3', 'success', true]]);
+    expect(outcomes[0].tools.map(tool => tool.name)).toContain('upgrade_customer');
+    expect(outcomes[1].tools.map(tool => tool.name)).toContain('reconcile_entitlement');
+    expect(evidence.run.events.filter(item => item.kind === 'raindrop-recorded')).toHaveLength(2);
+    expect(evidence.activeVersion).toBe('v3');
+  });
+
+  it('continues the demo when Raindrop telemetry fails', async () => {
+    const store = new MemoryStore();
+    await seedHistory(store);
+    const session = await store.createSession();
+    await store.setFault(session.id, 'silent');
+    const observer: OutcomeObserver = { async record() { throw new Error('network unavailable'); }, async close() {} };
+    const coordinator = new DemoCoordinator(store, new SimulatedAgents(), observer);
+    const runId = await coordinator.start(session.id);
+    for (let attempt = 0; attempt < 100 && (await store.getRun(runId))?.status === 'running'; attempt++) await new Promise(resolve => setTimeout(resolve, 10));
+    const evidence = await coordinator.evidence(runId);
+    expect(evidence.run.status).toBe('completed');
+    expect(evidence.run.events.filter(item => item.kind === 'raindrop-error')).toHaveLength(2);
+    expect(evidence.activeVersion).toBe('v3');
+  });
+
   it('stores the rejected and promoted proposals, evidence, and v3 result', async () => {
     const store = new MemoryStore();
     await seedHistory(store);

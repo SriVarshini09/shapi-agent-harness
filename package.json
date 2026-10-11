@@ -18,6 +18,7 @@
     "fastify": "*",
     "mongodb": "*",
     "openai": "*",
+    "raindrop-ai": "^1.0.1",
     "react": "*",
     "react-dom": "*",
     "zod": "*"
@@ -33,6 +34,8 @@
     "vite": "*",
     "vitest": "*"
   },
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "packageManager": "pnpm@12.4.2"
 }

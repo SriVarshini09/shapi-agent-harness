@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import './style.css';
 
 type Event = { seq: number; at: string; phase: string; kind: string; message: string; data?: Record<string, unknown> };
-type Ready = { database: boolean; memoryIndex: boolean; storage: string; agents: string; model: string; liveReady: boolean };
+type Ready = { database: boolean; memoryIndex: boolean; storage: string; agents: string; model: string; liveReady: boolean; raindropConfigured: boolean };
 type Session = { id: string; fault: string; customerId: string };
 type Case = { id: string; passed: boolean; category: string; detail: string };
 type Evaluation = { id: string; passed: boolean; results: Case[] };
@@ -77,6 +77,8 @@ function App() {
   const falseSuccess = events.some(event => event.kind === 'false-success');
   const verified = events.some(event => event.kind === 'verified-success');
   const promoted = events.some(event => event.kind === 'promoted');
+  const raindropEvents = events.filter(event => event.kind === 'raindrop-recorded');
+  const raindropError = events.some(event => event.kind === 'raindrop-error');
   const baselineClaimed = events.some(event => event.phase === 'baseline' && event.kind === 'claim');
   const customerAccess = evidence?.customer.entitlementActive ?? verified;
 
@@ -152,6 +154,7 @@ function App() {
           <div className="contract">payment_succeeded <span>→</span><br />entitlement_active</div>
           <div className={`verdict ${verified ? 'positive' : falseSuccess ? 'negative' : ''}`}>{verified ? 'VERIFIED SUCCESS' : falseSuccess ? 'FALSE SUCCESS' : 'AWAITING VERIFICATION'}</div>
           <div className="verdict-copy">{verified ? 'The customer really has Pro access.' : falseSuccess ? 'The model said complete. Customer state disagrees.' : 'SHAPI will inspect the actual customer record.'}</div>
+          {ready?.raindropConfigured && <div className="raindrop-status">RAINDROP · {raindropError ? 'TELEMETRY ERROR' : `${raindropEvents.length}/2 OUTCOMES RECORDED`}</div>}
         </article>
       </section>
 

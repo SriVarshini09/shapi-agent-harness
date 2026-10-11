@@ -4,12 +4,13 @@ import type { Agents } from './agents.js';
 import { candidatePolicy, ensurePolicies, policyForVersion } from './policies.js';
 import { evaluatePolicy } from './evals.js';
 import { makeTools, verifyReality } from './simulator.js';
+import type { ObservedTool, OutcomeObserver } from './raindrop.js';
 import type { DemoRun, DemoSession, Episode, Evidence, RunEvent, Store } from './types.js';
 
 export class DemoCoordinator {
   private emitters = new Map<string, EventEmitter>();
   private runningSessions = new Set<string>();
-  constructor(private store: Store, private agents: Agents) {}
+  constructor(private store: Store, private agents: Agents, private observer?: OutcomeObserver) {}
 
   async start(sessionId: string): Promise<string> {
     const session = await this.store.getSession(sessionId);
@@ -55,6 +56,16 @@ export class DemoCoordinator {
     this.emitters.get(runId)?.emit('event', event);
   }
 
+  private async observe(runId: string, session: DemoSession, version: 'v0' | 'v3', claim: 'success' | 'escalate', paymentSucceeded: boolean, entitlementActive: boolean, verified: boolean, tools: ObservedTool[]): Promise<void> {
+    if (!this.observer) return;
+    try {
+      const eventId = await this.observer.record({ runId, sessionId: session.id, version, model: this.agents.model, claim, paymentSucceeded, entitlementActive, verified, tools });
+      await this.event(runId, version === 'v0' ? 'verify' : 'improved', 'raindrop-recorded', `Raindrop ${version} outcome recorded.`, { eventId, version, signal: verified ? 'verified_recovery' : claim === 'success' ? 'false_success' : 'safe_escalation' });
+    } catch {
+      await this.event(runId, version === 'v0' ? 'verify' : 'improved', 'raindrop-error', 'Raindrop telemetry failed; Atlas outcome remains authoritative.', { version });
+    }
+  }
+
   private async execute(runId: string, session: DemoSession): Promise<void> {
     try {
       await ensurePolicies(this.store);
@@ -62,7 +73,9 @@ export class DemoCoordinator {
       const baselinePolicy = policyForVersion(policies, 'v0');
       await this.event(runId, 'setup', 'start', 'Same customer request. Same model. Broken provider enabled.', { model: this.agents.model, storage: this.store.mode });
       await this.event(runId, 'baseline', 'version', 'Harness v0 trusts tool responses.', { version: 'v0' });
+      const baselineTools: ObservedTool[] = [];
       const baseline = await this.agents.runTask(baselinePolicy, makeTools(this.store, session), async (tool, result) => {
+        baselineTools.push({ name: tool, result });
         await this.event(runId, 'baseline', 'tool', `${tool} → ${JSON.stringify(result)}`, { tool, result });
       });
       await this.event(runId, 'baseline', 'claim', `Task Agent: ${baseline.message}`, { claim: baseline.claim, model: baseline.model, prompt: baseline.prompt });
@@ -71,6 +84,7 @@ export class DemoCoordinator {
       await this.store.finishRun(runId, { baselineClaim: baseline.claim, baselineVerified });
       const reproduced = baseline.claim === 'success' && observed.paymentSucceeded && !observed.customer.entitlementActive;
       await this.event(runId, 'verify', reproduced ? 'false-success' : 'baseline-not-reproduced', reproduced ? 'FALSE SUCCESS: payment succeeded, but Maya has no Pro entitlement.' : 'Baseline did not reproduce a false-success claim.', { claim: baseline.claim, paymentSucceeded: observed.paymentSucceeded, entitlementActive: observed.customer.entitlementActive });
+      await this.observe(runId, session, 'v0', baseline.claim, observed.paymentSucceeded, observed.customer.entitlementActive, baselineVerified, baselineTools);
       if (!reproduced) throw new Error('Fault injection or baseline claim did not reproduce false success; reset and retry');
       const incidentSummary = 'Upgrade API returned 200 OK after payment, but customer entitlement stayed inactive. Agent claimed success. Reconciliation after payment can grant access.';
       const episode: Episode = {
@@ -117,11 +131,14 @@ export class DemoCoordinator {
       }
       if (!promoted || !promotedPolicy) throw new Error('No policy passed the promotion gate');
       await this.event(runId, 'improved', 'version', 'Running the same upgrade with harness v3.', { version: 'v3' });
+      const improvedTools: ObservedTool[] = [];
       const improved = await this.agents.runTask(promotedPolicy, makeTools(this.store, session), async (tool, result) => {
+        improvedTools.push({ name: tool, result });
         await this.event(runId, 'improved', 'tool', `${tool} → ${JSON.stringify(result)}`, { tool, result });
       });
       const finalReality = await verifyReality(this.store, session);
       const improvedVerified = improved.claim === 'success' && finalReality.outcomeSucceeded && improved.toolNames.includes('verify_entitlement');
+      await this.observe(runId, session, 'v3', improved.claim, finalReality.paymentSucceeded, finalReality.customer.entitlementActive, improvedVerified, improvedTools);
       await this.store.finishRun(runId, { improvedClaim: improved.claim, improvedVerified, status: 'completed', completedAt: new Date().toISOString() });
       await this.event(runId, 'improved', improvedVerified ? 'verified-success' : 'escalated', improvedVerified ? 'VERIFIED SUCCESS: Maya has Pro access.' : 'Upgrade was not verified; escalated.', { claim: improved.claim, entitlementActive: finalReality.customer.entitlementActive, paymentSucceeded: finalReality.paymentSucceeded, prompt: improved.prompt, model: improved.model });
     } catch (error) {
