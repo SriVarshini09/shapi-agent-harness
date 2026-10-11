@@ -30,10 +30,10 @@ Open `http://localhost:3007`. Click **Break Provider**, then **Upgrade Maya**. T
 ## Live Atlas + OpenAI setup
 
 1. Create an Atlas cluster, database user, and network access rule. Save its connection string as `MONGODB_URI`. Keep credentials out of Git. Atlas must support Vector Search and Automated Embedding with `voyage-4`.
-2. Set an OpenAI API key as `OPENAI_API_KEY`. The default model is `gpt-6-luna`; override with `OPENAI_MODEL` only if deliberately changing the demo model.
+2. Set an OpenAI API key as `OPENAI_API_KEY`. The default model is `gpt-6-luna`; override with `OPENAI_MODEL` only if deliberately changing the demo model. OpenAI's model page lists the Free API tier as unsupported for `gpt-6-luna`, so confirm your API project has model access before judging.
 3. Copy `.env.example` to `.env` and fill the values. Do **not** set `DEMO_STORAGE=memory` for live judging.
 4. Run `pnpm setup:atlas`. It creates collection indexes, three clearly labeled simulated prior episodes, and the `episode_memory_voyage4` Vector Search index. The index may take time to become queryable; rerun the command to check status.
-5. Run `pnpm build` then `pnpm start`. Visit `/api/ready` and require `database: true`, `memoryIndex: true`, `storage: "atlas"`, `agents: "openai"`, and `liveReady: true` before the demo. This readiness call proves an Atlas write followed by a read.
+5. Run `pnpm verify:live`. It must prove Atlas read/write, a seeded Vector Search hit, and a real `gpt-6-luna` structured Responses call. Then run `pnpm build` and `pnpm start`. Visit `/api/ready` and require `database: true`, `memoryIndex: true`, `storage: "atlas"`, `agents: "openai"`, and `liveReady: true` before the demo. The HTTP readiness call alone does not test whether the OpenAI key works.
 
 The server writes `shapi_harness` collections: `demo_sessions`, `customers`, `payments`, `runs`, `episodes`, `policies`, `eval_runs`, and a `readiness` canary. The `payments.idempotencyKey` index is unique. Runs, policy versions, evals, and episodes persist across server restarts.
 
@@ -57,6 +57,7 @@ pnpm typecheck
 pnpm test
 pnpm build
 pnpm setup:atlas
+pnpm verify:live
 pnpm start
 ```
 

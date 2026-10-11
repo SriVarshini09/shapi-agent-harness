@@ -9,7 +9,8 @@
     "start": "node dist/server.js",
     "test": "vitest run -c vitest.config.ts",
     "typecheck": "tsc --noEmit -p tsconfig.server.json && tsc --noEmit -p tsconfig.web.json",
-    "setup:atlas": "tsx src/setup-atlas.ts"
+    "setup:atlas": "tsx src/setup-atlas.ts",
+    "verify:live": "tsx src/verify-live.ts"
   },
   "dependencies": {
     "@fastify/static": "*",
