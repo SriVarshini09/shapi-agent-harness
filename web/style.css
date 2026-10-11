@@ -69,6 +69,16 @@
 @media(max-width:700px){.fault-lab,.evolution{padding:15px}.fault-chain{grid-template-columns:1fr}.fault-arrow{display:none}.fault-chain>div{min-height:0}.evolution-grid{grid-template-columns:1fr}.evolution-card{min-height:0}.fault-lab-head h2,.evolution-head h2{font-size:19px}}
 .evolution-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
 .evolution-card{min-height:0}
+.evolution-progress{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;margin:0 0 13px}
+.evolution-progress-step{min-width:0;border:1px solid #3b5040;background:#172219;padding:10px;display:flex;align-items:center;gap:9px;font:10px 'DM Mono',monospace;color:#8ca992}
+.evolution-progress-step:not(:last-child)::after{content:'→';margin-left:auto;color:#829c88}
+.evolution-progress-step>span{color:#a5ff70;font-weight:500}.evolution-progress-step strong{color:#e2f2dc;font-size:14px}.evolution-progress-step small{font-size:8px;line-height:1.2;color:#9fbaa1}
+.evolution-progress-step.running{border-color:#76a9b9}.evolution-progress-step.complete{border-color:#68936a}
+.evolution-learning{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+.evolution-learning>div{border-left:2px solid #608267;background:#142019;padding:8px 10px;min-width:0}
+.evolution-learning>div:last-child{border-left-color:#a5ff70}
+.evolution-learning span{font:8px 'DM Mono',monospace;letter-spacing:.7px;color:#99c8a2}
+.evolution-learning p{font:11px/1.4 'DM Sans',sans-serif;color:#dae9d7;margin:5px 0 0;overflow-wrap:anywhere}
 .evolution-trace{border:1px solid #354b3a;background:#101b14;min-width:0}
 .evolution-trace-head{display:flex;justify-content:space-between;gap:8px;border-bottom:1px solid #344738;padding:8px 10px;font:9px 'DM Mono',monospace;letter-spacing:.7px;color:#a5e69b}
 .evolution-trace-head span{color:#819c85}
@@ -79,4 +89,6 @@
 .evolution-trace-row.tool{color:#b5d9c1}.evolution-trace-row.claim{color:#e0eecb}.evolution-trace-row.false-success,.evolution-trace-row.rejected{color:#ffad99}.evolution-trace-row.promoted{color:#b9ff9f}
 .evolution-trace-empty{padding:13px 10px;font:10px 'DM Mono',monospace;color:#78917c}
 .stage-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+@media(max-width:900px){.evolution-progress{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:700px){.evolution-grid,.stage-grid{grid-template-columns:1fr}}
+@media(max-width:430px){.evolution-learning{grid-template-columns:1fr}.evolution-progress-step{flex-wrap:wrap}.evolution-progress-step small{width:100%}}

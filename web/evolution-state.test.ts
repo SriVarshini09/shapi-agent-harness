@@ -69,4 +69,38 @@ describe('judge-facing fault and evolution view', () => {
     const oldRun = [event('improved', 'version-outcome', { version: 'v3', claim: 'success', verified: true })];
     expect(deriveEvolution(oldRun)[3].trace.map(item => item.kind)).toEqual(['version-outcome']);
   });
+
+  it('derives a causal learning chain from observed outcomes, tools, memory and replay', () => {
+    const events = [
+      event('baseline', 'tool', { tool: 'upgrade_customer', result: { status: 200 } }),
+      event('verify', 'false-success'),
+      event('baseline', 'version-outcome', { version: 'v0', claim: 'success', entitlementActive: false }),
+      event('v1', 'tool', { tool: 'verify_entitlement', result: { entitlementActive: false } }),
+      event('v1', 'version-outcome', { version: 'v1', claim: 'escalate', entitlementActive: false }),
+      event('memory', 'retrieved', { memories: [{ id: 'prior' }] }),
+      event('v2', 'tool', { tool: 'verify_entitlement', result: { entitlementActive: false } }),
+      event('v2', 'version-outcome', { version: 'v2', claim: 'escalate', entitlementActive: false, memoryCount: 1 }),
+      event('propose', 'candidate', { candidate: { maxReconcileAttempts: 1 } }),
+      event('eval', 'results', { evaluation: { version: 'v3', results: Array.from({ length: 18 }, () => ({ passed: true })) } }),
+      event('promote', 'promoted'),
+      event('improved', 'tool', { tool: 'reconcile_entitlement', result: { status: 200 } }),
+      event('improved', 'version-outcome', { version: 'v3', claim: 'success', verified: true, entitlementActive: true }),
+    ];
+    const [v0, v1, v2, v3] = deriveEvolution(events);
+    expect(v0.liveProof).toContain('independent read found Pro inactive');
+    expect(v1.lessonInput).toContain('v0 claimed success');
+    expect(v1.liveProof).toContain('agent escalated');
+    expect(v2.lessonInput).toContain('v1 stopped the false claim');
+    expect(v2.liveProof).toContain('1 prior episode supplied');
+    expect(v3.lessonInput).toContain('v2 had incident memory');
+    expect(v3.liveProof).toContain('18/18 replay passed; reconciled once');
+    expect(v3.replay).toBe('18/18');
+  });
+
+  it('never shows recovery proof before the promoted policy and outcome exist', () => {
+    const events = [event('propose', 'candidate', { candidate: { maxReconcileAttempts: 1 } })];
+    const v3 = deriveEvolution(events)[3];
+    expect(v3.liveProof).toContain('replay gate is testing');
+    expect(v3.liveProof).not.toContain('confirmed Pro active');
+  });
 });

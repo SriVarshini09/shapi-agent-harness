@@ -15,6 +15,8 @@ export type EvolutionStep = {
   memoryHits: number | null;
   toolNames: string[];
   trace: EvolutionTraceItem[];
+  lessonInput: string;
+  liveProof: string;
 };
 
 const steps: Pick<EvolutionStep, 'version' | 'origin' | 'change' | 'capability'>[] = [
@@ -52,6 +54,30 @@ export function deriveEvolution(events: EvolutionEvent[]): EvolutionStep[] {
       ? outcome.verified === true ? 'VERIFIED RECOVERY' : outcome.claim === 'success' ? 'FALSE SUCCESS' : 'SAFE ESCALATION'
       : stage === 'running' ? step.version === 'v3' && !started ? 'PROPOSING + REPLAYING' : 'AGENT RUNNING' : 'WAITING';
     const replay = replayFor(step.version);
+    const priorVersion = { v0: null, v1: 'v0', v2: 'v1', v3: 'v2' }[step.version] as VersionId | null;
+    const prior = priorVersion ? outcomeFor(priorVersion) : undefined;
+    const lessonInput = step.version === 'v0' ? 'Starting rule: trust a successful tool response.'
+      : !prior ? `Waiting for ${priorVersion} outcome.`
+      : step.version === 'v1' ? prior.claim === 'success' && prior.entitlementActive === false ? 'v0 claimed success while Maya stayed locked.' : 'v0 outcome observed; checking the customer state.'
+      : step.version === 'v2' ? prior.claim === 'escalate' && prior.entitlementActive === false ? 'v1 stopped the false claim, but Maya stayed locked.' : 'v1 outcome observed; adding incident context.'
+      : prior.claim === 'escalate' && prior.entitlementActive === false ? typeof prior.memoryCount === 'number' && prior.memoryCount > 0 ? 'v2 had incident memory but still could only escalate.' : 'v2 escalated without recovering access.' : 'v2 outcome observed; testing a recovery policy.';
+    const toolResults = events.filter(event => event.phase === phase && event.kind === 'tool');
+    const upgradeAccepted = toolResults.some(event => event.data?.tool === 'upgrade_customer' && (event.data.result as { status?: number } | undefined)?.status === 200);
+    const verifiedInactive = toolResults.some(event => event.data?.tool === 'verify_entitlement' && (event.data.result as { entitlementActive?: boolean } | undefined)?.entitlementActive === false);
+    const reconcileCount = toolResults.filter(event => event.data?.tool === 'reconcile_entitlement').length;
+    const memoryEvent = events.find(event => event.phase === 'memory' && event.kind === 'retrieved');
+    const promoted = events.some(event => event.kind === 'promoted');
+    const rejected = events.some(event => event.kind === 'rejected');
+    const liveProof = !outcome
+      ? step.version === 'v3' && rejected ? 'Candidate failed replay; counterexamples sent back to proposer.'
+        : step.version === 'v3' && promoted ? `Replay ${replay?.results ? `${replay.results.filter(item => item.passed).length}/${replay.results.length}` : 'passed'}; policy promoted. Awaiting v3 agent.`
+        : step.version === 'v3' && candidate ? 'Model proposed a policy; replay gate is testing it.'
+        : stage === 'running' ? 'Live agent and tool results arriving…' : 'Awaiting observed run.'
+      : step.version === 'v0' ? upgradeAccepted && outcome.claim === 'success' && outcome.entitlementActive === false ? '200 OK → success claim; independent read found Pro inactive.' : 'Baseline outcome recorded; inspect the tool trace.'
+      : step.version === 'v1' ? verifiedInactive && outcome.claim === 'escalate' ? 'Independent read found Pro inactive → agent escalated.' : 'v1 outcome recorded; inspect verification trace.'
+      : step.version === 'v2' ? memoryEvent && verifiedInactive && outcome.claim === 'escalate' ? `${outcome.memoryCount ?? 0} prior ${outcome.memoryCount === 1 ? 'episode' : 'episodes'} supplied; Pro inactive → agent escalated.` : 'v2 outcome recorded; inspect memory and verification trace.'
+      : outcome.verified === true ? `${replay?.results ? `${replay.results.filter(item => item.passed).length}/${replay.results.length} replay passed; ` : ''}${reconcileCount === 1 ? 'reconciled once; ' : reconcileCount > 1 ? `reconciled ${reconcileCount} times; ` : ''}independent read confirmed Pro active.`
+        : 'v3 did not verify success; agent escalated.';
     return {
       ...step,
       change: candidate ? candidate.maxReconcileAttempts === 1 ? 'Recover once, then reverify' : 'Verify and escalate candidate' : step.change,
@@ -61,6 +87,8 @@ export function deriveEvolution(events: EvolutionEvent[]): EvolutionStep[] {
       memoryHits: outcome && typeof outcome.memoryCount === 'number' ? outcome.memoryCount : null,
       toolNames: outcome && Array.isArray(outcome.toolNames) ? outcome.toolNames.filter((name): name is string => typeof name === 'string') : [],
       trace,
+      lessonInput,
+      liveProof,
     };
   });
 }
