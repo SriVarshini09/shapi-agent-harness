@@ -9,6 +9,7 @@ describe('live flow map', () => {
     expect(initial).toHaveLength(8);
     expect(initial.every(step => step.status === 'waiting')).toBe(true);
     expect(deriveLiveFlow([], true)[1]).toMatchObject({ status: 'running', detail: 'Silent failure armed' });
+    expect(deriveLiveFlow([], false, false).map(step => step.system)).not.toContain('MONGODB ATLAS');
   });
 
   it('shows a detected false success and measured memory and replay', () => {
