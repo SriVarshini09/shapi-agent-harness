@@ -11,7 +11,7 @@ One-screen hackathon prototype: a Task Agent upgrades Maya to Pro, a broken prov
 | v2 | Retrieve similar incidents from Atlas memory | Engineered |
 | v3 | Verify, reconcile at most once, verify again, or escalate | Model-proposed, replay-gated |
 
-The two model-driven roles are Task Agent and Policy Proposer. The verifier, Vector Search query, 18-case replay, and promotion gate are ordinary code. This is harness-policy improvement, **not** model fine-tuning or autonomous code editing. Payments are simulated; no Stripe account or real charge is involved.
+The two model-driven roles are Task Agent and Policy Proposer. The verifier, Vector Search query, 18-case replay, and promotion gate are ordinary code. This is harness-policy improvement, **not** model fine-tuning or autonomous code editing. Maya and the entitlement provider are fictional. Payment uses a simulator unless a Stripe **test-mode** secret key is configured; even then, no money moves.
 
 ## Quick local development run
 
@@ -39,6 +39,12 @@ The server writes `shapi_harness` collections: `demo_sessions`, `customers`, `pa
 
 The live demo makes real OpenAI Responses API calls. It uses function calls for the Task Agent and a schema-constrained JSON proposal for the Policy Proposer. Every candidate records the returned model ID and the prompt. Atlas Vector Search with Voyage-backed Automated Embedding supplies the prior incidents. The live path performs one memory retrieval per demo run.
 
+## Optional real Stripe API, test mode only
+
+Set `STRIPE_SECRET_KEY=sk_test_...` in the server-side `.env` and restart. The app refuses `sk_live_` keys. A new demo session creates one real Stripe test-mode PaymentIntent for $5.00 USD using Stripe's `pm_card_visa` test PaymentMethod, then saves its `pi_...` ID in Atlas. The same payment is retrieved and checked with Stripe before each upgrade, verification, and reconciliation. v1–v3 reuse that PaymentIntent rather than creating another. The fault remains in the fictional entitlement provider: it returns `200 OK` without enabling Pro access. Stripe test mode is an actual Stripe API integration but **not a real-money payment or production customer upgrade**. The 18 replay fixtures remain deterministic simulations, not 18 Stripe calls. Stripe's test values and idempotency behavior are documented in its [testing guide](https://docs.stripe.com/testing) and [API reference](https://docs.stripe.com/api/idempotent_requests).
+
+`/api/ready` and the page identify `paymentProvider` as `stripe-test` or `simulated`. Never claim the Stripe integration is live until the test key is configured and a run's Atlas evidence contains a `pi_...` payment ID with `provider: "stripe-test"`. The secret key must never be committed or entered in the browser.
+
 ## Optional Raindrop outcome monitoring
 
 Add `RAINDROP_WRITE_KEY` to the server's local `.env` (and optionally `RAINDROP_PROJECT_ID` for a non-default project). Never put the write key in browser code or Git. Restart the server after changing `.env`. `/api/ready` reports `raindropConfigured: true` when the SDK is enabled; this does **not** prove that Raindrop accepted an event. Run the demo and check the Raindrop outcome indicator and `raindrop-recorded` events in Atlas evidence, then confirm both interactions and their signals in the Raindrop project before claiming the partner integration in a submission.
@@ -53,7 +59,7 @@ The server sends one interaction for each live harness version: `v0` false succe
 4. The proposer can submit one candidate and, if replay rejects it, revise once using counterexamples.
 5. The promotion gate runs 18 deterministic fixtures across normal success, silent `200`, delayed access, malformed responses, duplicate requests, and provider drift. All must pass, with zero false-success claims and zero duplicate charges. Evals do not call the model.
 6. If v3 is promoted, the Task Agent repeats the same customer request. The payment is reused via idempotency, the entitlement is checked, reconciliation is allowed once after a failed check, and success requires a final independent verification.
-7. **Inspect Atlas Evidence** opens the stored run, all four agent outcomes, episode, policy candidates, eval results, and active version. In local mode the button says **Inspect Local Evidence**.
+7. **Inspect Atlas Evidence** opens the stored run, all four agent outcomes, payment provider and ID, episode, policy candidates, eval results, and active version. In local mode the button says **Inspect Local Evidence**.
 
 The UI streams real server events; it does not animate a predetermined success score. Runtime depends on Atlas and model latency, so rehearse before presenting.
 
@@ -72,6 +78,6 @@ pnpm start
 
 ## Deployment and event checklist
 
-Render deployment is not automatic. This directory needs a Git remote pushed to GitHub/GitLab/Bitbucket, Atlas credentials/network access, and an OpenAI key before a hosted service can work. Deploy as one Node web service with build command `pnpm install --frozen-lockfile && pnpm build`, start command `pnpm start`, health check `/api/ready`, and environment variables `MONGODB_URI`, `OPENAI_API_KEY`, `OPENAI_MODEL=gpt-6-luna`, `DEMO_STORAGE=atlas`, and `NODE_ENV=production`. Add `RAINDROP_WRITE_KEY` and optional `RAINDROP_PROJECT_ID` only after validating Raindrop delivery. Run `pnpm setup:atlas` before judging. Avoid an unrestricted public link without abuse/cost controls because each run invokes a paid model.
+Render deployment is not automatic. This directory needs a Git remote pushed to GitHub/GitLab/Bitbucket, Atlas credentials/network access, and an OpenAI key before a hosted service can work. Deploy as one Node web service with build command `pnpm install --frozen-lockfile && pnpm build`, start command `pnpm start`, health check `/api/ready`, and environment variables `MONGODB_URI`, `OPENAI_API_KEY`, `OPENAI_MODEL=gpt-6-luna`, `DEMO_STORAGE=atlas`, and `NODE_ENV=production`. Add `RAINDROP_WRITE_KEY` and optional `RAINDROP_PROJECT_ID` only after validating Raindrop delivery. Add `STRIPE_SECRET_KEY` only if the test-mode flow has been verified. Run `pnpm setup:atlas` before judging. Avoid an unrestricted public link without abuse/cost controls because each run invokes a paid model and, with Stripe enabled, a Stripe test API call.
 
 At event check-in, confirm the actual submission deadline, format, judging criteria, and whether pre-existing SHAPI concepts/code are permitted. The public event brief did not state all of these. Disclose prior SHAPI inspiration and distinguish newly built side-project code from reused material.

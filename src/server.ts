@@ -11,6 +11,7 @@ import { MemoryStore } from './memory-store.js';
 import { ensurePolicies } from './policies.js';
 import { seedHistory } from './seed.js';
 import { createRaindropObserver } from './raindrop.js';
+import { SimulatedPaymentProvider, StripeTestPaymentProvider } from './payment-provider.js';
 
 const config = z.object({
   MONGODB_URI: z.string().optional(),
@@ -20,6 +21,7 @@ const config = z.object({
   DEMO_STORAGE: z.enum(['atlas', 'memory']).default('atlas'),
   RAINDROP_WRITE_KEY: z.string().optional(),
   RAINDROP_PROJECT_ID: z.string().optional(),
+  STRIPE_SECRET_KEY: z.string().optional(),
 }).parse(process.env);
 
 if (config.DEMO_STORAGE === 'atlas' && (!config.MONGODB_URI || !config.OPENAI_API_KEY)) {
@@ -35,12 +37,13 @@ await ensurePolicies(store);
 if (store.mode === 'memory') await seedHistory(store);
 const agents = config.OPENAI_API_KEY ? new OpenAIAgents(config.OPENAI_MODEL, config.OPENAI_API_KEY) : new SimulatedAgents();
 const observer = config.RAINDROP_WRITE_KEY ? await createRaindropObserver(config.RAINDROP_WRITE_KEY, config.RAINDROP_PROJECT_ID) : undefined;
-const coordinator = new DemoCoordinator(store, agents, observer);
+const paymentProvider = config.STRIPE_SECRET_KEY ? new StripeTestPaymentProvider(config.STRIPE_SECRET_KEY) : new SimulatedPaymentProvider();
+const coordinator = new DemoCoordinator(store, agents, observer, paymentProvider);
 const app = Fastify({ logger: true });
 
 app.get('/api/ready', async () => {
   const readiness = await store.readiness();
-  return { ...readiness, storage: store.mode, agents: agents instanceof SimulatedAgents ? 'simulated' : 'openai', model: agents.model, raindropConfigured: Boolean(observer), liveReady: store.mode === 'atlas' && !(agents instanceof SimulatedAgents) && readiness.memoryIndex };
+  return { ...readiness, storage: store.mode, agents: agents instanceof SimulatedAgents ? 'simulated' : 'openai', model: agents.model, paymentProvider: paymentProvider.name, raindropConfigured: Boolean(observer), liveReady: store.mode === 'atlas' && !(agents instanceof SimulatedAgents) && readiness.memoryIndex };
 });
 
 app.post('/api/sessions', async (_request, reply) => reply.code(201).send(await store.createSession()));

@@ -21,6 +21,7 @@
     "raindrop-ai": "^1.0.1",
     "react": "*",
     "react-dom": "*",
+    "stripe": "^23.0.0",
     "zod": "*"
   },
   "devDependencies": {

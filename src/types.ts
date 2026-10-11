@@ -18,6 +18,7 @@ export interface DemoSession {
 
 export interface Payment {
   id: string;
+  provider?: 'simulated' | 'stripe-test';
   sessionId: string;
   customerId: string;
   idempotencyKey: string;

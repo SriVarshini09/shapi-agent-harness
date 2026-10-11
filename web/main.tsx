@@ -4,13 +4,13 @@ import { deriveLiveFlow, type FlowStep } from './flow-state';
 import './style.css';
 
 type Event = { seq: number; at: string; phase: string; kind: string; message: string; data?: Record<string, unknown> };
-type Ready = { database: boolean; memoryIndex: boolean; storage: string; agents: string; model: string; liveReady: boolean; raindropConfigured: boolean };
+type Ready = { database: boolean; memoryIndex: boolean; storage: string; agents: string; model: string; liveReady: boolean; raindropConfigured: boolean; paymentProvider: 'simulated' | 'stripe-test' };
 type Session = { id: string; fault: string; customerId: string };
 type Case = { id: string; passed: boolean; falseSuccess: boolean; category: string; detail: string };
 type Evaluation = { id: string; version: string; passed: boolean; results: Case[] };
 type VersionOutcome = { version: string; claim: 'success' | 'escalate'; verified: boolean; paymentSucceeded: boolean; entitlementActive: boolean; paymentReused: boolean; toolNames: string[]; memoryCount: number; model: string };
 type Episode = { id: string; summary: string; score?: number; source: string };
-type Evidence = { run: { status: string; baselineClaim?: string; baselineVerified?: boolean; improvedClaim?: string; improvedVerified?: boolean }; customer: { name: string; entitlementActive: boolean }; payment: { id: string } | null; episodes: Episode[]; policies: { id: string; version: string; status: string; explanation: string }[]; evals: Evaluation[]; activeVersion: string };
+type Evidence = { run: { status: string; baselineClaim?: string; baselineVerified?: boolean; improvedClaim?: string; improvedVerified?: boolean }; customer: { name: string; entitlementActive: boolean }; payment: { id: string; provider?: string } | null; episodes: Episode[]; policies: { id: string; version: string; status: string; explanation: string }[]; evals: Evaluation[]; activeVersion: string };
 
 async function json<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(path, { ...options, headers: { ...(options?.body ? { 'content-type': 'application/json' } : {}), ...options?.headers } });
@@ -126,7 +126,7 @@ function App() {
     <header className="topbar">
       <div className="brand"><span className="brand-symbol">✳</span><span>SHAPI <small>AGENT HARNESS</small></span></div>
       <div className="top-center">DOES REALITY AGREE?</div>
-      <div className="status-group"><span className={`status-dot ${ready?.liveReady ? 'live' : ''}`} />{ready?.liveReady ? 'LIVE ATLAS + MODEL' : ready ? `${ready.storage.toUpperCase()} / ${ready.agents.toUpperCase()}` : 'CONNECTING'}<span className="version-pill">HARNESS {promoted ? 'v3' : 'v2'}</span></div>
+      <div className="status-group"><span className={`status-dot ${ready?.liveReady ? 'live' : ''}`} />{ready?.liveReady ? `LIVE ATLAS + MODEL / ${ready.paymentProvider === 'stripe-test' ? 'STRIPE TEST' : 'SIM PAYMENT'}` : ready ? `${ready.storage.toUpperCase()} / ${ready.agents.toUpperCase()} / ${ready.paymentProvider === 'stripe-test' ? 'STRIPE TEST' : 'SIM PAYMENT'}` : 'CONNECTING'}<span className="version-pill">HARNESS {promoted ? 'v3' : 'v2'}</span></div>
     </header>
 
     <main>
@@ -141,6 +141,7 @@ function App() {
         </div>
         {error && <div className="error" role="alert">{error}</div>}
         {!ready?.liveReady && ready && <div className="dev-note">Development mode. Live judging requires Atlas, the Voyage memory index, and OpenAI credentials.</div>}
+        {ready?.liveReady && ready.paymentProvider !== 'stripe-test' && <div className="dev-note">Payment is still simulated. Add a Stripe test secret key to enable a real Stripe API call; no money moves in test mode.</div>}
       </section>
 
       <section className="version-track" aria-label="Harness versions">
@@ -152,7 +153,7 @@ function App() {
         <div className="comparison-head"><div><span className="flow-kicker">{liveMode ? 'LIVE FOUR-VERSION COMPARISON' : 'SIMULATED FOUR-VERSION COMPARISON'}</span><h2>Same model. Same fault. Different harness.</h2></div><span>{versionOutcomes.length}/4 AGENT RUNS COMPLETE</span></div>
         <div className="comparison-grid">{[['v0', 'TRUSTS 200 OK'], ['v1', 'VERIFIES OUTCOME'], ['v2', 'VERIFIES + USES MEMORY'], ['v3', 'RECONCILES + REVERIFIES']].map(([version, label]) => <ComparisonCard key={version} version={version} label={label} evaluation={version === 'v3' ? latestEval : engineeredEvals.find(item => item.version === version)} outcome={versionOutcomes.find(item => item.version === version)} running={!runFinished && events.some(item => item.kind === 'version' && item.data?.version === version) && !versionOutcomes.some(item => item.version === version)} />)}</div>
         {runFinished && !versionOutcomes.length && <p className="comparison-note">This stored run predates the four-version live comparison. Click Reset Demo to run all four agents.</p>}
-        <p className="comparison-note">{liveMode ? 'Live outcome = actual model tool calls + independent Atlas state read.' : 'Development outcome = simulated agent tool calls + local state read; not Atlas/OpenAI evidence.'} Replay score = separate deterministic 18-case evaluation. v0 charges once; v1–v3 reuse that payment idempotently.</p>
+        <p className="comparison-note">{liveMode ? `Live outcome = actual model tool calls + independent Atlas state read. Payment provider = ${ready?.paymentProvider === 'stripe-test' ? 'Stripe test-mode API' : 'simulator'}.` : 'Development outcome = simulated agent tool calls + local state read; not Atlas/OpenAI evidence.'} Replay score = separate deterministic 18-case evaluation. v0 creates one {ready?.paymentProvider === 'stripe-test' ? 'test payment' : 'simulated payment'}; v1–v3 reuse it idempotently.</p>
       </section>
 
       <section className="live-flow" aria-label="Live working flow">
@@ -178,7 +179,7 @@ function App() {
           <div className="customer-name">Maya Chen</div>
           <div className="customer-email">maya@example.com</div>
           <div className="plan-line"><span>FREE</span><span className="arrow">→</span><span>PRO</span></div>
-          <div className="state-row"><span>PAYMENT</span><strong>{events.some(e => e.kind === 'tool' && e.message.includes('charge_customer')) ? '● CONFIRMED' : '○ PENDING'}</strong></div>
+          <div className="state-row"><span>{ready?.paymentProvider === 'stripe-test' ? 'STRIPE TEST PAYMENT' : 'SIMULATED PAYMENT'}</span><strong>{events.some(e => e.kind === 'tool' && e.data?.tool === 'charge_customer') ? '● CONFIRMED' : '○ PENDING'}</strong></div>
           <div className="state-row"><span>ENTITLEMENT</span><strong className={customerAccess ? 'good' : 'bad'}>{customerAccess ? '● ACTIVE' : '○ INACTIVE'}</strong></div>
           <div className={`access-banner ${customerAccess ? 'unlocked' : ''}`}>{customerAccess ? '◈  PRO ACCESS UNLOCKED' : '⌑  ACCESS LOCKED'}</div>
           <div className="customer-foot">INDEPENDENT {ready?.storage === 'atlas' ? 'ATLAS' : 'LOCAL'} STATE READ</div>

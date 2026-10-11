@@ -4,13 +4,14 @@ import type { Agents } from './agents.js';
 import { candidatePolicy, ensurePolicies, policyForVersion } from './policies.js';
 import { evaluatePolicy } from './evals.js';
 import { makeTools, verifyReality } from './simulator.js';
+import { SimulatedPaymentProvider, type PaymentProvider } from './payment-provider.js';
 import type { ObservedTool, OutcomeObserver } from './raindrop.js';
 import type { DemoRun, DemoSession, Episode, Evidence, Policy, RunEvent, Store, Version } from './types.js';
 
 export class DemoCoordinator {
   private emitters = new Map<string, EventEmitter>();
   private runningSessions = new Set<string>();
-  constructor(private store: Store, private agents: Agents, private observer?: OutcomeObserver) {}
+  constructor(private store: Store, private agents: Agents, private observer?: OutcomeObserver, private paymentProvider: PaymentProvider = new SimulatedPaymentProvider()) {}
 
   async start(sessionId: string): Promise<string> {
     const session = await this.store.getSession(sessionId);
@@ -72,12 +73,12 @@ export class DemoCoordinator {
     if (version !== 'v1' && version !== 'v2') throw new Error('Expected engineered v1 or v2 policy');
     await this.event(runId, version, 'version', `Running the same upgrade with harness ${version}.`, { version, memoryCount: memories.length });
     const tools: ObservedTool[] = [];
-    const result = await this.agents.runTask(policy, makeTools(this.store, session), async (tool, output) => {
+    const result = await this.agents.runTask(policy, makeTools(this.store, session, this.paymentProvider), async (tool, output) => {
       tools.push({ name: tool, result: output });
       await this.event(runId, version, 'tool', `${tool} → ${JSON.stringify(output)}`, { tool, result: output });
     }, memories);
     await this.event(runId, version, 'claim', `Task Agent ${version}: ${result.message}`, { claim: result.claim, model: result.model, prompt: result.prompt });
-    const reality = await verifyReality(this.store, session);
+    const reality = await verifyReality(this.store, session, this.paymentProvider);
     const verified = result.claim === 'success' && reality.outcomeSucceeded && result.toolNames.includes('verify_entitlement');
     await this.event(runId, version, 'version-outcome', `Harness ${version}: ${result.claim}; entitlement ${reality.customer.entitlementActive ? 'active' : 'inactive'}.`, {
       version, claim: result.claim, verified, paymentSucceeded: reality.paymentSucceeded,
@@ -96,15 +97,15 @@ export class DemoCoordinator {
       await ensurePolicies(this.store);
       const policies = await this.store.listPolicies();
       const baselinePolicy = policyForVersion(policies, 'v0');
-      await this.event(runId, 'setup', 'start', 'Same customer request. Same model. Broken provider enabled.', { model: this.agents.model, storage: this.store.mode });
+      await this.event(runId, 'setup', 'start', 'Same customer request. Same model. Broken provider enabled.', { model: this.agents.model, storage: this.store.mode, paymentProvider: this.paymentProvider.name });
       await this.event(runId, 'baseline', 'version', 'Harness v0 trusts tool responses.', { version: 'v0' });
       const baselineTools: ObservedTool[] = [];
-      const baseline = await this.agents.runTask(baselinePolicy, makeTools(this.store, session), async (tool, result) => {
+      const baseline = await this.agents.runTask(baselinePolicy, makeTools(this.store, session, this.paymentProvider), async (tool, result) => {
         baselineTools.push({ name: tool, result });
         await this.event(runId, 'baseline', 'tool', `${tool} → ${JSON.stringify(result)}`, { tool, result });
       });
       await this.event(runId, 'baseline', 'claim', `Task Agent: ${baseline.message}`, { claim: baseline.claim, model: baseline.model, prompt: baseline.prompt });
-      const observed = await verifyReality(this.store, session);
+      const observed = await verifyReality(this.store, session, this.paymentProvider);
       const baselineVerified = baseline.claim === 'success' && observed.outcomeSucceeded;
       await this.store.finishRun(runId, { baselineClaim: baseline.claim, baselineVerified });
       const reproduced = baseline.claim === 'success' && observed.paymentSucceeded && !observed.customer.entitlementActive;
@@ -165,11 +166,11 @@ export class DemoCoordinator {
       if (!promoted || !promotedPolicy) throw new Error('No policy passed the promotion gate');
       await this.event(runId, 'improved', 'version', 'Running the same upgrade with harness v3.', { version: 'v3' });
       const improvedTools: ObservedTool[] = [];
-      const improved = await this.agents.runTask(promotedPolicy, makeTools(this.store, session), async (tool, result) => {
+      const improved = await this.agents.runTask(promotedPolicy, makeTools(this.store, session, this.paymentProvider), async (tool, result) => {
         improvedTools.push({ name: tool, result });
         await this.event(runId, 'improved', 'tool', `${tool} → ${JSON.stringify(result)}`, { tool, result });
       }, memories);
-      const finalReality = await verifyReality(this.store, session);
+      const finalReality = await verifyReality(this.store, session, this.paymentProvider);
       const improvedVerified = improved.claim === 'success' && finalReality.outcomeSucceeded && improved.toolNames.includes('verify_entitlement');
       await this.event(runId, 'improved', 'version-outcome', `Harness v3: ${improved.claim}; entitlement ${finalReality.customer.entitlementActive ? 'active' : 'inactive'}.`, {
         version: 'v3', claim: improved.claim, verified: improvedVerified, paymentSucceeded: finalReality.paymentSucceeded,
