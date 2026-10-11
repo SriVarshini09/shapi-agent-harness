@@ -38,8 +38,10 @@ const proposalSchema = {
 };
 
 export class OpenAIAgents implements Agents {
-  private client: OpenAI;
-  constructor(readonly model: string, apiKey: string) { this.client = new OpenAI({ apiKey, timeout: 30000, maxRetries: 1 }); }
+  private client: Pick<OpenAI, 'responses'>;
+  constructor(readonly model: string, apiKey: string, client?: Pick<OpenAI, 'responses'>) {
+    this.client = client ?? new OpenAI({ apiKey, timeout: 30000, maxRetries: 1 });
+  }
 
   async runTask(policy: Policy, tools: AgentTools, trace: (tool: string, result: Record<string, unknown>) => Promise<void>): Promise<TaskOutcome> {
     const allowed = policy.maxReconcileAttempts ? ['charge_customer', 'upgrade_customer', 'verify_entitlement', 'reconcile_entitlement'] : policy.requireVerification ? ['charge_customer', 'upgrade_customer', 'verify_entitlement'] : ['charge_customer', 'upgrade_customer'];
@@ -65,7 +67,9 @@ export class OpenAIAgents implements Agents {
         if (call.type !== 'function_call' || !allowed.includes(call.name)) throw new Error('Unsupported tool call');
         if (call.name === 'reconcile_entitlement' && toolNames.filter(name => name === call.name).length >= 1) throw new Error('Reconciliation attempt limit exceeded');
         if (call.name === 'reconcile_entitlement' && (lastVerified !== false || !toolNames.includes('upgrade_customer'))) throw new Error('Reconciliation requires a failed independent verification after upgrade');
+        if (call.name === 'verify_entitlement' && !toolNames.includes('upgrade_customer')) throw new Error('Verification requires an upgrade attempt');
         const result = await tools[call.name as keyof AgentTools]();
+        if (call.name === 'upgrade_customer') lastVerified = null;
         if (call.name === 'verify_entitlement') lastVerified = (result as { entitlementActive: boolean; paymentSucceeded: boolean }).entitlementActive && (result as { entitlementActive: boolean; paymentSucceeded: boolean }).paymentSucceeded;
         if (call.name === 'reconcile_entitlement') lastVerified = null;
         toolNames.push(call.name);
