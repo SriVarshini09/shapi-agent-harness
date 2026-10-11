@@ -170,6 +170,7 @@ export class DemoCoordinator {
         improvedTools.push({ name: tool, result });
         await this.event(runId, 'improved', 'tool', `${tool} → ${JSON.stringify(result)}`, { tool, result });
       }, memories);
+      await this.event(runId, 'improved', 'claim', `Task Agent v3: ${improved.message}`, { claim: improved.claim, model: improved.model, prompt: improved.prompt });
       const finalReality = await verifyReality(this.store, session, this.paymentProvider);
       const improvedVerified = improved.claim === 'success' && finalReality.outcomeSucceeded && improved.toolNames.includes('verify_entitlement');
       await this.event(runId, 'improved', 'version-outcome', `Harness v3: ${improved.claim}; entitlement ${finalReality.customer.entitlementActive ? 'active' : 'inactive'}.`, {

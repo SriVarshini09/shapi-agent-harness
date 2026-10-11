@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { deriveLiveFlow, type FlowStep } from './flow-state';
 import { deriveEvolution, deriveFaultEvidence, type EvolutionStep } from './evolution-state';
@@ -35,10 +35,16 @@ function ComparisonCard({ version, label, evaluation, outcome, running }: { vers
 }
 
 function EvolutionCard({ step }: { step: EvolutionStep }) {
+  const traceListRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (traceListRef.current) traceListRef.current.scrollTop = traceListRef.current.scrollHeight; }, [step.trace.length]);
   return <article className={`evolution-card ${step.stage} ${step.result === 'FALSE SUCCESS' ? 'false' : ''} ${step.result === 'VERIFIED RECOVERY' ? 'verified' : ''}`}>
     <div className="evolution-card-top"><strong>{step.version}</strong><span>{step.origin}</span><em>{step.stage === 'complete' ? 'OBSERVED' : step.stage === 'running' ? 'RUNNING' : 'WAITING'}</em></div>
     <h3>{step.change}</h3>
     <div className="evolution-capability">{step.capability}</div>
+    <div className="evolution-trace" aria-label={`${step.version} live agent trace`} aria-live="polite">
+      <div className="evolution-trace-head">LIVE TRACE <span>{step.trace.length} EVENTS · SCROLL FOR HISTORY</span></div>
+      <div className="evolution-trace-list" ref={traceListRef}>{step.trace.length ? step.trace.map((event, index) => <div className={`evolution-trace-row ${event.kind}`} key={`${event.seq ?? index}-${event.kind}`}><span>{event.seq == null ? '·' : String(event.seq).padStart(2, '0')}</span><span>{event.message}</span></div>) : <div className="evolution-trace-empty">{step.stage === 'waiting' ? 'Waiting for this version…' : 'Waiting for first event…'}</div>}</div>
+    </div>
     <div className="evolution-result" aria-live="polite">{step.result}</div>
     <div className="evolution-measures"><span>AGENT CLAIM <b>{step.claim}</b></span><span>CUSTOMER <b>{step.access}</b></span><span>REPLAY <b>{step.replay}</b></span></div>
     {step.memoryHits !== null && step.version !== 'v0' && <div className="evolution-foot">{step.memoryHits} PRIOR MEMORY HITS · {step.toolNames.length} TOOL CALLS</div>}
@@ -108,7 +114,6 @@ function App() {
   const promoted = events.some(event => event.kind === 'promoted');
   const raindropEvents = events.filter(event => event.kind === 'raindrop-recorded');
   const raindropError = events.some(event => event.kind === 'raindrop-error');
-  const baselineClaimed = events.some(event => event.phase === 'baseline' && event.kind === 'claim');
   const latestEntitlementRead = events.filter(event => event.kind === 'tool' && event.data?.tool === 'verify_entitlement').at(-1)?.data?.result as { entitlementActive?: boolean } | undefined;
   const customerAccess = evidence?.customer.entitlementActive ?? latestEntitlementRead?.entitlementActive ?? verified;
   const runFinished = events.some(event => ['verified-success', 'escalated', 'error'].includes(event.kind));
@@ -170,7 +175,7 @@ function App() {
 
       <section className="evolution" id="harness-evolution" aria-label="Live harness evolution">
         <div className="evolution-head"><div><span className="flow-kicker">LIVE HARNESS EVOLUTION / v0 → v3</span><h2>Watch the rule change, not the model weights.</h2></div><span>2 AGENT ROLES · 4 TASK RUNS · SAME {ready?.model ?? 'MODEL'}</span></div>
-        <p>v1 and v2 are engineered harness upgrades. The Policy Proposer suggests v3; the 18-case deterministic replay gate must approve it before the Task Agent receives reconciliation permission.</p>
+        <p>One request: “Upgrade Maya to Pro.” v1 and v2 are engineered harness upgrades. The Policy Proposer suggests v3; the 18-case deterministic replay gate must approve it before the Task Agent receives reconciliation permission.</p>
         <div className="evolution-grid">{evolution.map(step => <EvolutionCard key={step.version} step={step} />)}</div>
         <div className="evolution-gate">PROMOTION GATE <strong>18/18 REPLAY CASES</strong> · ZERO FALSE-SUCCESS CLAIMS · ZERO DUPLICATE CHARGES <span>Scores are replay results, not live-run success rates.</span></div>
       </section>
@@ -190,17 +195,8 @@ function App() {
       </section>
 
       <section className="stage-grid">
-        <article className="panel agent-panel">
-          <div className="panel-heading"><span className="panel-index">01</span><span>TASK AGENT</span><span className="panel-marker">{baselineClaimed ? '●' : '○'}</span></div>
-          <div className="panel-intro">“Upgrade Maya to Pro.”</div>
-          <div className="timeline" aria-live="polite">
-            {events.filter(event => ['baseline','v1','v2','improved'].includes(event.phase) && ['tool','claim','version','verified-success','escalated'].includes(event.kind)).map(event => <div className={`timeline-row ${event.phase}`} key={event.seq}><span className="time">{String(event.seq).padStart(2,'0')}</span><span className="phase-tag">{event.phase === 'baseline' ? 'v0' : event.phase === 'improved' ? 'v3' : event.phase}</span><span>{event.message}</span></div>)}
-            {!events.length && <div className="empty">Waiting for the first action…</div>}
-          </div>
-        </article>
-
         <article className={`panel customer-panel ${falseSuccess && !verified ? 'failure' : ''} ${verified ? 'success' : ''}`}>
-          <div className="panel-heading"><span className="panel-index">02</span><span>GROUND TRUTH</span><span className="panel-marker">◇</span></div>
+          <div className="panel-heading"><span className="panel-index">01</span><span>GROUND TRUTH</span><span className="panel-marker">◇</span></div>
           <div className="customer-avatar">M</div>
           <div className="customer-name">Maya Chen</div>
           <div className="customer-email">maya@example.com</div>
@@ -212,7 +208,7 @@ function App() {
         </article>
 
         <article className="panel shapi-panel">
-          <div className="panel-heading"><span className="panel-index">03</span><span>SHAPI VERIFIER</span><span className="panel-marker">✳</span></div>
+          <div className="panel-heading"><span className="panel-index">02</span><span>SHAPI VERIFIER</span><span className="panel-marker">✳</span></div>
           <div className="contract-label">OUTCOME CONTRACT</div>
           <div className="contract">payment_succeeded <span>→</span><br />entitlement_active</div>
           <div className={`verdict ${verified ? 'positive' : falseSuccess ? 'negative' : ''}`}>{verified ? 'VERIFIED SUCCESS' : falseSuccess ? 'FALSE SUCCESS' : 'AWAITING VERIFICATION'}</div>

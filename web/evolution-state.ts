@@ -1,6 +1,7 @@
-export type EvolutionEvent = { phase: string; kind: string; data?: Record<string, unknown> };
+export type EvolutionEvent = { seq?: number; phase: string; kind: string; message?: string; data?: Record<string, unknown> };
 export type VersionId = 'v0' | 'v1' | 'v2' | 'v3';
 export type EvolutionStage = 'waiting' | 'running' | 'complete';
+export type EvolutionTraceItem = { seq: number | null; kind: string; message: string };
 export type EvolutionStep = {
   version: VersionId;
   origin: string;
@@ -13,6 +14,7 @@ export type EvolutionStep = {
   replay: string;
   memoryHits: number | null;
   toolNames: string[];
+  trace: EvolutionTraceItem[];
 };
 
 const steps: Pick<EvolutionStep, 'version' | 'origin' | 'change' | 'capability'>[] = [
@@ -30,6 +32,15 @@ export function deriveEvolution(events: EvolutionEvent[]): EvolutionStep[] {
   }).at(-1)?.data?.evaluation as { results?: { passed: boolean }[] } | undefined;
 
   return steps.map(step => {
+    const phase = { v0: 'baseline', v1: 'v1', v2: 'v2', v3: 'improved' }[step.version];
+    const hasClaim = events.some(event => event.phase === phase && event.kind === 'claim');
+    const trace = events.filter(event => {
+      if (event.phase === phase) return ['version', 'tool', 'claim'].includes(event.kind) || (step.version === 'v3' && !hasClaim && event.kind === 'version-outcome');
+      if (step.version === 'v0') return event.phase === 'verify' && event.kind === 'false-success';
+      if (step.version === 'v2') return event.phase === 'memory' && event.kind === 'retrieved';
+      if (step.version === 'v3') return (event.phase === 'propose' && ['candidate', 'invalid-proposal'].includes(event.kind)) || (event.phase === 'eval' && ['results', 'rejected'].includes(event.kind)) || (event.phase === 'promote' && event.kind === 'promoted');
+      return false;
+    }).map(event => ({ seq: event.seq ?? null, kind: event.kind, message: event.message ?? event.kind }));
     const outcome = outcomeFor(step.version);
     const started = events.some(event => event.kind === 'version' && event.data?.version === step.version);
     const proposing = step.version === 'v3' && (Boolean(outcomeFor('v2')) || events.some(event => ['candidate', 'results', 'promoted'].includes(event.kind)));
@@ -49,6 +60,7 @@ export function deriveEvolution(events: EvolutionEvent[]): EvolutionStep[] {
       replay: replay?.results ? `${replay.results.filter(item => item.passed).length}/${replay.results.length}` : '—',
       memoryHits: outcome && typeof outcome.memoryCount === 'number' ? outcome.memoryCount : null,
       toolNames: outcome && Array.isArray(outcome.toolNames) ? outcome.toolNames.filter((name): name is string => typeof name === 'string') : [],
+      trace,
     };
   });
 }
